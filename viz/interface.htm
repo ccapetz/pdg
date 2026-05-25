@@ -41,6 +41,10 @@
 					<button type="button" class="btn btn-secondary">6</button>
 					<button type="button" class="btn btn-secondary">7</button>
 				</div>-->
+				<div class="btn-group me-2" role="group" aria-label="Scoring">
+					<button type="button" class="btn btn-outline-info" id="score-button">Score</button>
+					<button type="button" class="btn btn-outline-success" id="optimize-button">Optimize</button>
+				</div>
 				<div class="btn-group" role="group" aria-label="Third group">
 					<!-- <button type="button" class="btn btn-outline-dark">Help</button> -->
 					<button type="button" class="btn btn-outline-dark" id="save-button">Save</button>
@@ -51,8 +55,81 @@
 		</div>
 		
 	
+		<div id="help-panel" class="help-panel">
+			<button id="help-toggle" class="help-toggle" aria-expanded="false" aria-controls="help-body">
+				Help <span class="help-chevron">▾</span>
+			</button>
+			<div id="help-body" class="help-body" hidden>
+				<div class="help-section">
+					<div class="help-section-title">Modes</div>
+					<div class="help-row"><kbd>m</kbd><span>Manipulate mode</span></div>
+					<div class="help-row"><kbd>d</kbd><span>Draw mode</span></div>
+				</div>
+				<div class="help-section">
+					<div class="help-section-title">Selection</div>
+					<div class="help-row"><kbd>click</kbd><span>Select node / edge</span></div>
+					<div class="help-row"><kbd>shift+click</kbd><span>Multi-select</span></div>
+					<div class="help-row"><kbd>a</kbd><span>Select all</span></div>
+					<div class="help-row"><kbd>b</kbd><span>Box select</span></div>
+					<div class="help-row"><kbd>Esc</kbd><span>Cancel / deselect</span></div>
+				</div>
+				<div class="help-section">
+					<div class="help-section-title">Editing</div>
+					<div class="help-row"><kbd>t</kbd><span>Draw arrow from selection</span></div>
+					<div class="help-row"><kbd>g</kbd><span>Grab &amp; move selection</span></div>
+					<div class="help-row"><kbd>Space</kbd><span>Simulate selection (hold)</span></div>
+					<div class="help-row"><kbd>x</kbd><span>Delete selection</span></div>
+					<div class="help-row"><kbd>right-click</kbd><span>Rename / new node</span></div>
+				</div>
+				<div class="help-section">
+					<div class="help-section-title">Inspector</div>
+					<div class="help-row"><kbd>click edge</kbd><span>Open CPD panel</span></div>
+					<div class="help-row"><span class="help-indent">Edit values, press Tab/Enter to commit</span></div>
+				</div>
+				<div class="help-section">
+					<div class="help-section-title">Scoring</div>
+					<div class="help-row"><span>Score — factor-product Inc/IDef</span></div>
+					<div class="help-row"><span>Optimize — minimize inconsistency</span></div>
+				</div>
+				<div class="help-section">
+					<div class="help-section-title">File</div>
+					<div class="help-row"><span>Save / Load buttons (bottom right)</span></div>
+				</div>
+			</div>
+		</div>
+
+		<div id="score-panel" class="score-panel" style="display:none">
+			<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
+			<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
+		</div>
+
 		<canvas id="canvas" width="100%" height="100%" class="fullsize z1"></canvas>
 		<svg id="svg" width="100%" height="100%" class="fullsize z2 ghost"></svg>
+
+		<div id="inspector" class="inspector-panel">
+			<div class="inspector-empty p-3 text-muted text-center">
+				<small>Click an edge to inspect</small>
+			</div>
+			<div class="inspector-content" style="display:none">
+				<div class="inspector-header d-flex align-items-center justify-content-between p-2 border-bottom">
+					<span class="inspector-label fs-6 fw-semibold"></span>
+					<button class="btn-close btn-sm" id="inspector-close" aria-label="Close"></button>
+				</div>
+				<div class="p-3">
+					<div class="mb-3">
+						<div class="text-muted small mb-1">Sources</div>
+						<div class="inspector-srcs fw-semibold font-monospace small"></div>
+					</div>
+					<div class="mb-3">
+						<div class="text-muted small mb-1">Targets</div>
+						<div class="inspector-tgts fw-semibold font-monospace small"></div>
+					</div>
+					<hr class="my-2">
+					<div class="text-muted small mb-2">CPD</div>
+					<div class="inspector-cpd"></div>
+				</div>
+			</div>
+		</div>
 		
 		<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script><!-- JQuery -->
 		<script src="https://d3js.org/d3.v7.js"></script> <!-- d3.js -->

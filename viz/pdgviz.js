@@ -2,17 +2,87 @@
 // import defaultExport from '/link-modified.js';
 
 console.log("pdgvz.js");
-hypergraph = {
-	nodes : ['A', 'B', 'C', 'D'],
-	hedges : {
-		p0: [['B', 'C'], ['A']],
-		$p_2$: [['A', 'D'], ['B']],
-		p4: [['A', 'D'], ['C']],
-		p6: [['B', 'C'], ['D']]
+
+const INSPECTOR_WIDTH = 280;
+
+function renderMathLabel(text) {
+	if (!text) return '';
+	const hasMath = text.includes('$') || /\\[a-zA-Z]/.test(text);
+	if (hasMath && typeof katex !== 'undefined') {
+		const math = text.replace(/^\$+/, '').replace(/\$+$/, '');
+		try { return katex.renderToString(math, { throwOnError: false, displayMode: false }); }
+		catch(e) { /* fall through */ }
 	}
-};
+	return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
 
+function rowSum(cpd, combo) {
+	return Object.values(cpd[combo]).reduce((s, v) => s + (v || 0), 0);
+}
 
+function buildCpdTable(link) {
+	const cpd = link.cpd;
+	const srcCombos = Object.keys(cpd);
+	if (!srcCombos.length) return '<span class="no-cpd">Empty CPD</span>';
+	const tgtStates = Object.keys(cpd[srcCombos[0]]);
+
+	let html = '<div class="table-responsive"><table class="table table-sm table-bordered mb-0 cpd-table"><thead><tr>';
+	if (link.srcs.length) html += `<th class="text-muted">${link.srcs.join(', ')}</th>`;
+	for (const t of tgtStates) html += `<th class="text-center">${t}</th>`;
+	html += '</tr></thead><tbody>';
+	for (const combo of srcCombos) {
+		const invalid = Math.abs(rowSum(cpd, combo) - 1) > 0.001;
+		html += `<tr${invalid ? ' class="cpd-row-invalid"' : ''}>`;
+		if (link.srcs.length) html += `<td class="text-muted small">${combo}</td>`;
+		for (const t of tgtStates) {
+			const p = cpd[combo][t];
+			const val = typeof p === 'number' ? p.toFixed(4) : p;
+			html += `<td><input type="number" class="cpd-input" min="0" max="1" step="0.0001" value="${val}" data-combo="${combo}" data-tgt="${t}"></td>`;
+		}
+		html += '</tr>';
+	}
+	html += '</tbody></table></div>';
+	return html;
+}
+
+function showEdgeInspector(link) {
+	const panel = document.getElementById('inspector');
+	panel.querySelector('.inspector-empty').style.display = 'none';
+	const content = panel.querySelector('.inspector-content');
+	content.style.display = '';
+
+	panel.querySelector('.inspector-label').innerHTML = renderMathLabel(link.label);
+	panel.querySelector('.inspector-srcs').textContent =
+		link.srcs.length ? link.srcs.join(', ') : '\u2205 (prior)';
+	panel.querySelector('.inspector-tgts').textContent = link.tgts.join(', ');
+
+	const cpdEl = panel.querySelector('.inspector-cpd');
+	cpdEl.innerHTML = link.cpd
+		? buildCpdTable(link)
+		: '<span class="no-cpd">No CPD loaded</span>';
+
+	if (link.cpd) {
+		cpdEl.querySelectorAll('.cpd-input').forEach(input => {
+			input.addEventListener('change', () => {
+				const combo = input.dataset.combo;
+				const tgt = input.dataset.tgt;
+				let val = parseFloat(input.value);
+				if (isNaN(val)) val = 0;
+				val = Math.max(0, Math.min(1, val));
+				input.value = val.toFixed(4);
+				link.cpd[combo][tgt] = val;
+				const row = input.closest('tr');
+				row.classList.toggle('cpd-row-invalid', Math.abs(rowSum(link.cpd, combo) - 1) > 0.001);
+			});
+		});
+	}
+}
+
+function hideInspector() {
+	const panel = document.getElementById('inspector');
+	panel.querySelector('.inspector-empty').style.display = '';
+	panel.querySelector('.inspector-content').style.display = 'none';
+}
 
 $(function() {
 	// resize to full screen
@@ -25,31 +95,36 @@ $(function() {
 		canvas.height = window.innerHeight;
 		if(typeof simulation != "undefined") {
 			for(let pudgha of pdgs) {
-			// pdg.sim.force('center').x(canvas.width/2);
-			// pdg.sim.force('center').y(canvas.height/2);
 				pudgha.sim.alpha(1).restart();
 				pudgha.tick();
 			}
 		}
-		// pdg.tick();
 	}
 	window.addEventListener('resize', resizeCanvas, false);
 	resizeCanvas()
-	
+
 	let mode = $('#drag-mode-toolbar button.active').attr('data-mode');
-	
+
 	$('#drag-mode-toolbar button').on('click', function() {
 		$('#drag-mode-toolbar button').removeClass("active");
 		$(this).addClass('active');
 		mode = $(this).attr('data-mode');
-		// console.log('new mode: ', mode);
 	});
-	
-	
+
+
 	let mouse = { w : 0, h: 0 };
-	
-	pdg = PDGView(hypergraph, mouse);
-	pdgs =  [ pdg ];
+
+	function initPDG(hypergraph) {
+		pdg = PDGView(hypergraph, mouse);
+		pdgs = [pdg];
+		pdg.repaint_via(redraw);
+		document.getElementById('score-panel').style.display = 'none';
+	}
+
+	fetch('examples/smoking-cpd.json')
+		.then(r => r.json())
+		.then(initPDG)
+		.catch(() => initPDG(undefined));
 	
 		
 	$('#save-button').click(function(e){
@@ -58,14 +133,68 @@ $(function() {
 	$('#load-button').click(function(e){
 		$('#fileupload').click();
 	})
+	$('#inspector-close').click(function() {
+		hideInspector();
+	});
+
+	function applyScoreResult(result) {
+		const panel = document.getElementById('score-panel');
+		panel.style.display = '';
+		document.getElementById('score-inc').textContent = result.inc.toExponential(3);
+		document.getElementById('score-idef').textContent = result.idef.toExponential(3);
+		if (result.edge_scores) pdg.set_edge_scores(result.edge_scores);
+		redraw();
+	}
+
+	$('#score-button').click(async function() {
+		$(this).prop('disabled', true).text('Scoring…');
+		try {
+			const res = await fetch('/api/score', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ hypergraph: pdg.state, gamma: 1.0 })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			applyScoreResult(await res.json());
+		} catch(e) {
+			alert('Score failed: ' + e.message);
+		} finally {
+			$(this).prop('disabled', false).text('Score');
+		}
+	});
+
+	$('#optimize-button').click(async function() {
+		$(this).prop('disabled', true).text('Optimizing…');
+		try {
+			const res = await fetch('/api/optimize', {
+				method: 'POST',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ hypergraph: pdg.state, gamma: 1.0, iters: 350 })
+			});
+			if (!res.ok) throw new Error(await res.text());
+			applyScoreResult(await res.json());
+		} catch(e) {
+			alert('Optimize failed: ' + e.message);
+		} finally {
+			$(this).prop('disabled', false).text('Optimize');
+		}
+	});
+	$('#help-toggle').click(function() {
+		const body = document.getElementById('help-body');
+		const panel = document.getElementById('help-panel');
+		const open = !body.hidden;
+		body.hidden = open;
+		panel.classList.toggle('open', !open);
+		$(this).attr('aria-expanded', String(!open));
+	});
 	$('#fileupload').on('change', function(evt){
 		// console.log(evt);
 		const reader = new FileReader();
 		reader.onload = function(e) {
 			// console.log(e);
 			let ob = JSON.parse(e.target.result);
-			// load_hypergraph(ob);
 			pdg.load(ob);
+			document.getElementById('score-panel').style.display = 'none';
 			// console.log("LOADED HYPERGRAPH:", ob);
 		};
 		reader.readAsText(evt.target.files[0]);
@@ -124,8 +253,7 @@ $(function() {
 		
 		
 	}
-	pdg.repaint_via(redraw);
-	
+
 	d3.select(canvas).call(d3.drag()
 			.container(canvas)
 			.clickDistance(10)
@@ -305,9 +433,8 @@ $(function() {
 			// let name = promptForName("Enter New Variable Name", obj.id, pdg.all_node_ids);
 			// if(!name) return;
 			// pdg.rename_node(obj.id, name);
-		} else if(link) { // rename selected cpd
-			
-			
+		} else if(link) { // inspect selected edge
+			showEdgeInspector(link);
 		} else { // nothing selected; create new variable here.
 			setTimeout(function() {
 				let name = promptForName("Enter A Variable Name",
@@ -407,6 +534,9 @@ $(function() {
 			
 		} else if(mode == 'move') { // selection in manipulate mode
 			pdg.point_select(e, !e.shiftKey);
+			let clickedLink = pdg.pickL(e);
+			if (clickedLink) showEdgeInspector(clickedLink);
+			else if (!pdg.pickN(e)) hideInspector();
 		}
 		// else if(mode == 'select'){
 		// 	let link = pickL(e);
@@ -416,8 +546,8 @@ $(function() {
 		// }
 	});
 	window.addEventListener("keydown", function(event){
-		// console.log(event);
-		
+		if (document.activeElement && document.activeElement.tagName === 'INPUT') return;
+
 		if(event.key == 'Escape'){ // cancel //
 			if ( temp_link ) {
 				if(temp_link.based_on ) 

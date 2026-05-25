@@ -118,8 +118,17 @@ function PDGView(hypergraph, mousept) {
 				let l = links.find(l => l.label == label);
 				Object.assign(l, ob);
 			});
-		} 
-		// 
+		}
+
+		// load CPD data if present
+		if(hypergraph.cpds) {
+			for(let l of links) {
+				if(hypergraph.cpds[l.label]) {
+					l.cpd = hypergraph.cpds[l.label];
+				}
+			}
+		}
+
 		
 		// if simulation exists, update nodes & edges of simulation + restart.
 		if(typeof simulation != "undefined") {
@@ -149,9 +158,16 @@ function PDGView(hypergraph, mousept) {
 		for(let l of links) {
 			hedges[l.label] = [l.srcs, l.tgts];
 		}
+		// collect CPD data from links that have it
+		let cpds = {};
+		for(let l of links) {
+			if(l.cpd) cpds[l.label] = l.cpd;
+		}
+
 		return {
 			nodes : nodes.map(n => n.id),
 			hedges : hedges,
+			cpds : Object.keys(cpds).length ? cpds : undefined,
 			viz : {
 				nodes : Object.fromEntries(nodes.map(
 						n => [n.id, cloneAndPluck(n, ["x", "y", "w", "h", "selected", "expanded"])]
@@ -343,9 +359,20 @@ function PDGView(hypergraph, mousept) {
 		restyle_links();
 		repaint();
 	}
+	let _inc_max = 0;
+
+	function inc_color(l) {
+		if (l.inc_score == null || _inc_max === 0) return null;
+		const t = Math.min(1, l.inc_score / _inc_max);
+		const r = Math.round(220 * t + 60 * (1 - t));
+		const g = Math.round(30 * t + 120 * (1 - t));
+		const b = Math.round(30 * t + 200 * (1 - t));
+		return `rgb(${r},${g},${b})`;
+	}
+
 	function draw(context) {
 		context.save();
-		
+
 		context.globalAlpha = 1;
 		for( let l of links) {
 			// let lw = l.hasAttribute('lw')? l.lw : 2;
@@ -354,9 +381,10 @@ function PDGView(hypergraph, mousept) {
 			context.lineWidth = lw * 1.2 + 3;
 			context.strokeStyle = l.selected ? "rgba(230, 150, 50, 0.4)" : "rgba(255, 255, 255, 0.7)";
 			context.stroke(l.path2d);
-			
+
 			context.lineWidth =  lw;
-			context.strokeStyle = l.selected ? "#863" : "black";
+			const col = inc_color(l);
+			context.strokeStyle = l.selected ? "#863" : (col || "black");
 			context.stroke(l.path2d);
 			// context.lineWidth = 1;
 			// context.setLineDash([4,1]);
@@ -543,6 +571,18 @@ function PDGView(hypergraph, mousept) {
 		}
 	}
 	
+	function renderLatexLabel(text) {
+		if (!text) return '';
+		const hasMath = text.includes('$') || /\\[a-zA-Z]/.test(text);
+		if (hasMath && typeof katex !== 'undefined') {
+			const math = text.replace(/^\$+/, '').replace(/\$+$/, '');
+			try {
+				return katex.renderToString(math, { throwOnError: false, displayMode: false });
+			} catch(e) { /* fall through */ }
+		}
+		return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+	}
+
 	function fresh_label(prefix="p") {
 		existing = links.map( l => l.label);
 		i = 1;
@@ -595,11 +635,12 @@ function PDGView(hypergraph, mousept) {
 			.classed("node", true);
 			// .call(simulation.drag);
 		newnodeGs.append("rect").classed("nodeshape", true);
-		newnodeGs.append("text");		
-		
+		newnodeGs.append("foreignObject").classed("label-fo", true)
+			.append("xhtml:div").classed("label-html node-label", true);
+
 		nodedata.exit().each(remove_node)
 			.remove();
-		
+
 		nodedata = nodedata.merge(newnodeGs);
 		nodedata.classed('expanded', n => n.expanded);
 		nodedata.classed('anchored', n => n.anchored);
@@ -607,7 +648,10 @@ function PDGView(hypergraph, mousept) {
 			.attr('width', n => n.w).attr('x', n => -n.w/2)
 			.attr('height', n => n.h).attr('y', n => -n.h/2)
 			.attr('rx', 15);
-		nodedata.selectAll("text").text(n => n.id);
+		nodedata.selectAll("foreignObject.label-fo")
+			.attr('width', n => n.w).attr('x', n => -n.w/2)
+			.attr('height', n => n.h).attr('y', n => -n.h/2);
+		nodedata.selectAll("div.node-label").html(n => renderLatexLabel(n.id));
 		nodedata.filter( n => ! n.display).attr('display', 'none');
 		
 		// if (typeof simulation != 'undefined') {
@@ -621,15 +665,18 @@ function PDGView(hypergraph, mousept) {
 		let lndata = svgg.selectAll(".linknode").data(linknodes, ln => ln.link.label);
 		
 		let newlnGs = lndata.enter().append("g").classed("linknode", true);
-		newlnGs.append("text").classed("bg", true);
-		newlnGs.append("text").classed("fg", true);
+		newlnGs.append("foreignObject").classed("label-fo linknode-label-fo", true)
+			.append("xhtml:div").classed("label-html linknode-label", true);
 
 		lndata.exit().remove();
-		
+
 		lndata = lndata.merge(newlnGs);
 		lndata.attr('transform', ln => "translate("+ ln.x+","+ln.y+")")
 			.classed('selected', ln => ln.link.selected);
-		lndata.selectAll("text").text(ln => ln.link.label);		
+		lndata.selectAll("foreignObject.linknode-label-fo")
+			.attr('width', 120).attr('x', -60)
+			.attr('height', 30).attr('y', -15);
+		lndata.selectAll("div.linknode-label").html(ln => renderLatexLabel(ln.link.label));
 	}
 	function restyle_nodes() {
 		/*** Now for somedd svgg operations. ***/
@@ -923,6 +970,13 @@ function PDGView(hypergraph, mousept) {
 		select_all : select_all,
 		delete_selection : delete_selection,
 		update_simulation : update_simulation,
+		set_edge_scores(scores) {
+			const vals = Object.values(scores).filter(v => v > 0);
+			_inc_max = vals.length ? Math.max(...vals) : 0;
+			for (const l of links) {
+				l.inc_score = scores[l.label] ?? null;
+			}
+		},
 		get state() {
 			return current_hypergraph();
 		},
@@ -951,6 +1005,7 @@ function PDGView(hypergraph, mousept) {
 		get linknodes() { return linknodes; },
 		get links() { return links; },
 		get lookup() { return lookup; },
+		renderLatexLabel : renderLatexLabel,
 		pickL : pickL,
 		pickN : pickN,
 		picksL : picksL,

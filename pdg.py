@@ -1278,7 +1278,10 @@ class PDG:
 		# return self.to_FG(via).to_pgmpy_markov_net();
 		## ... so instead,
 		
-		from pgmpy.models import MarkovNetwork
+		try:
+			from pgmpy.models import DiscreteMarkovNetwork as MarkovNetwork
+		except ImportError:
+			from pgmpy.models import MarkovNetwork
 		from pgmpy.factors.discrete import DiscreteFactor
 		from itertools import combinations
 		

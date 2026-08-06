@@ -242,7 +242,12 @@ def _process_vars(varlist, vars, given=None):
 			vars = re.split(r'[\s,]', vars)
 
 	targetvars = []
-	conditionvars = list(given) if given else []
+	if given is None:
+		conditionvars = []
+	elif isinstance(given, rv.Variable):
+		conditionvars = [given]
+	else:
+		conditionvars = list(given)
 
 	mode = "join"
 

@@ -1,3 +1,10 @@
 __pycache__
 *egg-info
 .venv/
+
+# OS / editor cruft. .DS_Store was tracked upstream, so it is also untracked
+# here (git rm --cached) — a binary Finder file rewrites itself on every folder
+# view and would otherwise show up dirty in every diff.
+.DS_Store
+.obsidian/
+.claude/settings.local.json

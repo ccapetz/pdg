@@ -64,10 +64,57 @@ def _infer_domains(hedges: dict, cpds: dict) -> dict[str, list]:
     return domains
 
 
-def json_to_pdg(data: dict) -> PDG:
+def _as_weight(val, default: float) -> float:
+    """Coerce a JSON alpha/beta value to a float, accepting 'inf'/'∞'."""
+    if val is None:
+        return default
+    if isinstance(val, str):
+        s = val.strip().lower()
+        if s in ("inf", "infinity", "∞"):
+            return float("inf")
+        if s in ("-inf", "-infinity", "-∞"):
+            return float("-inf")
+        return float(s)
+    return float(val)
+
+
+def _smooth(row: dict, epsilon: float) -> dict:
+    """Mix a cpd row toward uniform:  p' = (1-ε)p + ε·unif.
+
+    WORKAROUND for an upstream bug, not a modelling choice. `opt_joint` diverges
+    to an infinite-loss corner when a cpd contains a hard zero: on C8
+    (examples/c8-modeled-bias.json) it returns a point with Inc = ∞ even though
+    an Inc = 0 point exists, and M.score there evaluates to a *complex* number.
+    With ε = 1e-3 the same model converges to the analytically correct answers
+    (Ex 4.1's 2/3 at γ=0 and 3/4 at γ=1).
+
+    Default is ε = 0, so nothing is smoothed unless asked. See CLAUDE.md.
+    """
+    if epsilon <= 0:
+        return row
+    n = len(row)
+    if n == 0:
+        return row
+    return {k: (1.0 - epsilon) * v + epsilon / n for k, v in row.items()}
+
+
+def json_to_pdg(data: dict, epsilon: float = 0.0) -> PDG:
     hedges: dict = data["hedges"]   # label -> [srcs, tgts]
     cpds: dict = data.get("cpds", {})
     node_names: list[str] = data["nodes"]
+
+    if epsilon > 0:
+        cpds = {
+            label: {combo: _smooth(row, epsilon) for combo, row in cpd.items()}
+            for label, cpd in cpds.items()
+        }
+
+    # Per-arc confidences (G1). Absent → PDG defaults (α = β = 1).
+    # α = confidence in the functional dependence (structural)
+    # β = confidence in the cpd itself (observational)
+    # A *proper* PDG has β >> α.
+    alphas: dict = data.get("alpha", {})
+    betas: dict = data.get("beta", {})
 
     domains = _infer_domains(hedges, cpds)
 
@@ -110,7 +157,74 @@ def json_to_pdg(data: dict) -> PDG:
 
         M += (label, CPT.from_ddict(src_var, tgt_var, data_dict))
 
+    # Apply per-arc confidences after all edges exist, so that label lookup
+    # via PDG._get_edgekey resolves unambiguously.
+    for label in hedges:
+        if label not in alphas and label not in betas:
+            continue
+        try:
+            if label in alphas:
+                M.set_alpha(label, _as_weight(alphas[label], 1.0))
+            if label in betas:
+                M.set_beta(label, _as_weight(betas[label], 1.0))
+        except ValueError:
+            # Edge was skipped above (no cpd, or multi-target) — nothing to weight.
+            continue
+
     return M
+
+
+def _json_safe(x):
+    """Make inf/-inf/NaN survive JSON encoding.
+
+    Infinite inconsistency is not an error case — it is the *point* of Ex 2.1
+    (c1-two-coins): a cpd that assigns probability 0 to an outcome is infinitely
+    surprised by any belief that gives it mass. But `float('inf')` raises
+    "Out of range float values are not JSON compliant" in the encoder, which
+    turned C1 into an HTTP 500.
+
+    Non-finite floats become the strings "inf" / "-inf" / "nan" — symmetric with
+    `_as_weight`, which already accepts "inf" on the way in.
+    """
+    import math
+
+    if isinstance(x, dict):
+        return {k: _json_safe(v) for k, v in x.items()}
+    if isinstance(x, (list, tuple)):
+        return [_json_safe(v) for v in x]
+    if isinstance(x, float):
+        if math.isnan(x):
+            return "nan"
+        if math.isinf(x):
+            return "inf" if x > 0 else "-inf"
+    if isinstance(x, complex):
+        # M.score can return a complex number at an Inc=inf point (upstream bug)
+        return _json_safe(float(x.real))
+    return x
+
+
+def _marginals(M: PDG, mu) -> dict[str, dict[str, float]]:
+    """Per-variable marginal of `mu`, as {var: {value: prob}}.
+
+    This is what makes the 'watch the number change' demos work — Ex 4.1's
+    2/3-vs-3/4 and Ex 3.6's .7-vs-.85 are claims about a marginal, not about
+    the inconsistency score.
+    """
+    import numpy as np
+
+    out: dict[str, dict[str, float]] = {}
+    for v in M.atomic_vars:
+        try:
+            arr = np.asarray(mu.conditional_marginal((v,), query_mode="ndarray")).ravel()
+            # NB: iterating a Variable yields set order, which does NOT match the
+            # ndarray axis order. `v.ordered` is the positional ordering.
+            vals = [str(s) for s in v.ordered]
+            if len(arr) != len(vals):
+                continue
+            out[v.name] = {val: float(p) for val, p in zip(vals, arr)}
+        except Exception:
+            continue
+    return out
 
 
 def _edge_scores(M: PDG, mu) -> dict[str, float]:
@@ -147,6 +261,7 @@ def _edge_scores(M: PDG, mu) -> dict[str, float]:
 class ScoreRequest(BaseModel):
     hypergraph: dict
     gamma: float = 1.0
+    epsilon: float = 0.0   # cpd smoothing; see _smooth()
 
 
 class OptimizeRequest(BaseModel):
@@ -154,11 +269,26 @@ class OptimizeRequest(BaseModel):
     gamma: float = 1.0
     algorithm: str = "torch"   # "torch" | "cvxpy"
     iters: int = 350
+    epsilon: float = 0.0       # cpd smoothing; see _smooth()
 
 
 # ── FastAPI app ───────────────────────────────────────────────────────────────
 
 app = FastAPI(title="PDG API")
+
+
+@app.middleware("http")
+async def _no_store(request, call_next):
+    """Never let the browser cache viz assets.
+
+    This is a single-user dev server, so caching buys nothing and costs real
+    debugging time: editing `pdg-view.js` and reloading would silently keep
+    running the OLD module, so a fix looks like it didn't work. Caught exactly
+    that way while verifying the ∞ edge coloring.
+    """
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
 
 
 @app.get("/")
@@ -170,13 +300,14 @@ def root():
 def api_score(req: ScoreRequest):
     """Compute Inc/IDef for the factor-product distribution."""
     try:
-        M = json_to_pdg(req.hypergraph)
+        M = json_to_pdg(req.hypergraph, epsilon=req.epsilon)
         mu = M.factor_product()
-        return {
+        return _json_safe({
             "inc": float(M.Inc(mu)),
             "idef": float(M.IDef(mu)),
             "edge_scores": _edge_scores(M, mu),
-        }
+            "marginals": _marginals(M, mu),
+        })
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
@@ -188,7 +319,7 @@ async def api_optimize(req: OptimizeRequest):
         raise HTTPException(status_code=400, detail="cvxpy is not installed")
 
     try:
-        M = json_to_pdg(req.hypergraph)
+        M = json_to_pdg(req.hypergraph, epsilon=req.epsilon)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"PDG construction failed: {e}")
 
@@ -206,11 +337,12 @@ async def api_optimize(req: OptimizeRequest):
         if getattr(mu, "_torch", False):
             from pdg.dist import RawJointDist as RJD
             mu = RJD(mu.data.detach().numpy(), mu.varlist, use_torch=False)
-        return {
+        return _json_safe({
             "inc": float(M.Inc(mu)),
             "idef": float(M.IDef(mu)),
             "edge_scores": _edge_scores(M, mu),
-        }
+            "marginals": _marginals(M, mu),
+        })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

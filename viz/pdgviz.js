@@ -20,6 +20,41 @@ function rowSum(cpd, combo) {
 	return Object.values(cpd[combo]).reduce((s, v) => s + (v || 0), 0);
 }
 
+// α/β round-trip through JSON as either numbers or the strings "inf"/"∞", so the
+// inspector has to speak both. Returns undefined for blank input, which the caller
+// treats as "unset" (delete the property) rather than "set to 1" — the JSON omits
+// absent weights entirely so the server falls through to the PDG default, and
+// collapsing that distinction would silently rewrite every file the user opens.
+function parseWeight(raw) {
+	const s = String(raw).trim();
+	if (s === '') return undefined;
+	if (/^(inf|infinity|∞)$/i.test(s)) return 'inf';
+	const n = Number(s);
+	// Reject negatives: α and β are confidences. Returning null lets the caller
+	// distinguish "leave it alone, the input was garbage" from "clear it".
+	return (Number.isFinite(n) && n >= 0) ? n : null;
+}
+
+function formatWeight(v) {
+	if (v === undefined || v === null) return '';
+	if (v === 'inf' || v === '∞' || v === Infinity) return 'inf';
+	return String(v);
+}
+
+// A proper PDG has β ≫ α. Saying so at the point of editing is the cheapest way to
+// convey what these two numbers are for; the geometric encoding (thickness = β,
+// opacity = α) shows the comparison but never names it.
+function weightHint(link) {
+	const a = parseWeight(formatWeight(link.alpha));
+	const b = parseWeight(formatWeight(link.beta));
+	const av = a === undefined ? 1 : (a === 'inf' ? Infinity : a);
+	const bv = b === undefined ? 1 : (b === 'inf' ? Infinity : b);
+	if (typeof av !== 'number' || typeof bv !== 'number') return '';
+	if (bv > av) return 'β > α — proper (observation outweighs structure)';
+	if (bv === av) return 'β = α — structure and observation weighted equally';
+	return 'β < α — structure outweighs the cpd';
+}
+
 function buildCpdTable(link) {
 	const cpd = link.cpd;
 	const srcCombos = Object.keys(cpd);
@@ -45,7 +80,11 @@ function buildCpdTable(link) {
 	return html;
 }
 
-function showEdgeInspector(link) {
+// `onEdit` is invoked after any \u03b1/\u03b2 change so the caller can repaint \u2014 \u03b1 and \u03b2 are
+// rendered geometrically (opacity and thickness), so an edit that does not repaint
+// leaves the picture contradicting the panel. Passed in rather than referenced
+// directly because redraw() lives inside the page's jQuery-ready closure.
+function showEdgeInspector(link, onEdit) {
 	const panel = document.getElementById('inspector');
 	panel.querySelector('.inspector-empty').style.display = 'none';
 	const content = panel.querySelector('.inspector-content');
@@ -55,6 +94,33 @@ function showEdgeInspector(link) {
 	panel.querySelector('.inspector-srcs').textContent =
 		link.srcs.length ? link.srcs.join(', ') : '\u2205 (prior)';
 	panel.querySelector('.inspector-tgts').textContent = link.tgts.join(', ');
+
+	const hintEl = panel.querySelector('.inspector-weight-hint');
+	const alphaEl = document.getElementById('inspector-alpha');
+	const betaEl  = document.getElementById('inspector-beta');
+	alphaEl.value = formatWeight(link.alpha);
+	betaEl.value  = formatWeight(link.beta);
+	hintEl.textContent = weightHint(link);
+
+	// Rebind per show: these inputs are reused across edges, so a listener that
+	// closed over the previous link would keep writing to it. replaceWith(clone)
+	// is the least fiddly way to drop every prior listener.
+	for (const [el, key] of [[alphaEl, 'alpha'], [betaEl, 'beta']]) {
+		const fresh = el.cloneNode(true);
+		el.replaceWith(fresh);
+		fresh.addEventListener('change', () => {
+			const parsed = parseWeight(fresh.value);
+			if (parsed === null) {            // unparseable \u2014 restore, do not guess
+				fresh.value = formatWeight(link[key]);
+				return;
+			}
+			if (parsed === undefined) delete link[key];   // back to the PDG default
+			else link[key] = parsed;
+			fresh.value = formatWeight(link[key]);
+			hintEl.textContent = weightHint(link);
+			if (onEdit) onEdit();
+		});
+	}
 
 	const cpdEl = panel.querySelector('.inspector-cpd');
 	cpdEl.innerHTML = link.cpd
@@ -90,15 +156,31 @@ $(function() {
 		svg = d3.select("#svg");
 	let context = canvas.getContext("2d");
 
+	// Declared up front rather than sprung into existence by initPDG's assignment.
+	// As implicit globals these could not be *read* before the first initPDG call
+	// (a bare `pdg` reference throws ReferenceError, not undefined), which made
+	// "load into the existing view, or build one if there isn't one yet" impossible
+	// to express. They sit above resizeCanvas because resizeCanvas runs immediately
+	// at line ~104 and touches `pdgs`; a `let` below that point would be in the
+	// temporal dead zone, and `typeof` does NOT guard against TDZ the way it does
+	// for undeclared names. Nothing outside this closure touches them.
+	let pdg = null;
+	let pdgs = [];
+
 	function resizeCanvas() {
+		// Assigning canvas.width CLEARS the canvas, so every view must redraw.
 		canvas.width = window.innerWidth;
 		canvas.height = window.innerHeight;
-		if(typeof simulation != "undefined") {
-			for(let pudgha of pdgs) {
-				pudgha.sim.alpha(1).restart();
-				pudgha.tick();
-			}
-		}
+		// The old guard here tested `typeof simulation`, but `simulation` is local to
+		// PDGView and does not exist in this scope — so it was always "undefined" and
+		// this never ran, leaving the canvas blank after a resize until some unrelated
+		// event repainted it. That was masked while the force simulation kept ticking
+		// after load; now that pinned layouts stop the simulation outright, nothing
+		// would repaint at all and a resize would blank the graph for good.
+		//
+		// tick() recomputes link paths and repaints without reheating the simulation,
+		// which is what we want: a resize is not a reason to relayout a pinned figure.
+		for (const view of pdgs) view.tick();
 	}
 	window.addEventListener('resize', resizeCanvas, false);
 	resizeCanvas()
@@ -118,15 +200,147 @@ $(function() {
 		pdg = PDGView(hypergraph, mouse);
 		pdgs = [pdg];
 		pdg.repaint_via(redraw);
-		document.getElementById('score-panel').style.display = 'none';
+		hideScoreReadout();
 	}
 
-	fetch('examples/smoking-cpd.json')
-		.then(r => r.json())
-		.then(initPDG)
-		.catch(() => initPDG(undefined));
-	
-		
+	// ── γ / ε controls ───────────────────────────────────────────────────────
+	// `lastScoreAction` is what makes γ *live*: once you have run Score or
+	// Optimize, moving the slider re-runs the same computation. That is what
+	// turns C7/C8 from static files into the demo they are meant to be — drag γ
+	// from 0 to 1 and watch Pr(H) move 2/3 → 3/4 (Ex 4.1).
+	let lastScoreAction = null;
+
+	// Iteration count for /api/optimize. Per-example, because convergence is a
+	// property of the model: C8 reads Pr(H)=0.711 at 350 iterations and 0.750 at
+	// 2000, and an unconverged number is displayed just as confidently as a
+	// converged one. The catalog carries the counts check_examples.py asserts.
+	const DEFAULT_ITERS = 800;
+	let currentIters = DEFAULT_ITERS;
+
+	function getGamma()   { return parseFloat(document.getElementById('gamma-slider').value); }
+	function getEpsilon() { return parseFloat(document.getElementById('epsilon-select').value); }
+
+	function setGamma(g) {
+		document.getElementById('gamma-slider').value = String(g);
+		document.getElementById('gamma-val').textContent = Number(g).toFixed(2);
+	}
+
+	function setEpsilon(eps) {
+		const sel = document.getElementById('epsilon-select');
+		const opt = [...sel.options].find(o => parseFloat(o.value) === eps);
+		if (opt) { sel.value = opt.value; return; }
+		// An example requesting an ε with no matching option is a catalog bug. Adding
+		// the option surfaces it; silently keeping the old ε would score the model
+		// under settings it was not meant to be scored under.
+		const o = document.createElement('option');
+		o.value = String(eps);
+		o.textContent = String(eps);
+		sel.appendChild(o);
+		sel.value = o.value;
+	}
+
+	function hideScoreReadout() {
+		document.getElementById('score-readout').style.display = 'none';
+		document.getElementById('score-marginals').innerHTML = '';
+	}
+
+	function rerunLastScore() {
+		if (lastScoreAction === 'score')         $('#score-button').click();
+		else if (lastScoreAction === 'optimize') $('#optimize-button').click();
+	}
+
+	$('#gamma-slider').on('input', function () {
+		document.getElementById('gamma-val').textContent = Number(this.value).toFixed(2);
+	});
+	// Re-run on `change` (pointer release), not `input` — optimize takes ~0.4 s, so
+	// firing per pixel of drag would queue dozens of solves for one gesture.
+	$('#gamma-slider').on('change', rerunLastScore);
+	$('#epsilon-select').on('change', rerunLastScore);
+
+	// ── Example catalog ──────────────────────────────────────────────────────
+	// examples/catalog.json is generated by gen_catalog_examples.py alongside the
+	// models themselves, so a picker entry cannot drift from the model it names.
+	// It is a static file, not an endpoint — one less moving part.
+	let catalogEntries = [];
+
+	function showExampleMeta(entry) {
+		document.getElementById('example-source').textContent = entry ? entry.source : '';
+		document.getElementById('example-note').textContent   = entry ? entry.note   : '';
+	}
+
+	async function loadExample(file) {
+		const entry = catalogEntries.find(e => e.file === file) || null;
+		const res = await fetch('examples/' + file);
+		if (!res.ok) throw new Error(`${file}: HTTP ${res.status}`);
+		const ob = await res.json();
+
+		if (pdg) pdg.load(ob); else initPDG(ob);
+
+		// Each example ships the γ/ε under which it shows what it is meant to show
+		// (C8 needs ε=1e-3 to dodge the opt_joint hard-zero divergence), so applying
+		// them is part of loading the example, not a separate step for the user.
+		if (entry && typeof entry.gamma   === 'number') setGamma(entry.gamma);
+		if (entry && typeof entry.epsilon === 'number') setEpsilon(entry.epsilon);
+		currentIters = (entry && typeof entry.iters === 'number') ? entry.iters : DEFAULT_ITERS;
+
+		showExampleMeta(entry);
+		hideScoreReadout();
+		lastScoreAction = null;
+	}
+
+	async function initCatalog() {
+		const sel = document.getElementById('example-picker');
+		let first = 'smoking-cpd.json';
+
+		try {
+			const res = await fetch('examples/catalog.json');
+			if (!res.ok) throw new Error('HTTP ' + res.status);
+			catalogEntries = await res.json();
+		} catch (e) {
+			// A missing catalog should degrade to "the default model still loads",
+			// not to a blank canvas. Load remains available for hand-picked files.
+			console.warn('catalog.json unavailable; falling back to the default model', e);
+			catalogEntries = [];
+		}
+
+		sel.innerHTML = '';
+		if (catalogEntries.length) {
+			// Group by tier, preserving catalog order — the tiers ARE the reading
+			// order (Baseline → Tier 0 structure → Tier 1 inconsistency).
+			const tiers = [];
+			for (const e of catalogEntries) if (!tiers.includes(e.tier)) tiers.push(e.tier);
+			for (const tier of tiers) {
+				const grp = document.createElement('optgroup');
+				grp.label = tier;
+				for (const e of catalogEntries.filter(x => x.tier === tier)) {
+					const opt = document.createElement('option');
+					opt.value = e.file;
+					opt.textContent = e.title;
+					grp.appendChild(opt);
+				}
+				sel.appendChild(grp);
+			}
+			first = catalogEntries[0].file;
+		}
+		sel.value = first;
+
+		try {
+			await loadExample(first);
+		} catch (e) {
+			console.error('failed to load ' + first, e);
+			if (!pdg) initPDG(undefined);
+		}
+	}
+
+	$('#example-picker').on('change', async function () {
+		if (!this.value) return;
+		try { await loadExample(this.value); }
+		catch (e) { alert('Failed to load example: ' + e.message); }
+	});
+
+	initCatalog();
+
+
 	$('#save-button').click(function(e){
 		download_JSON(pdg.state, 'hypergraph');
 	});
@@ -137,11 +351,49 @@ $(function() {
 		hideInspector();
 	});
 
+	// Inc is genuinely infinite for some models — Ex 2.1 (c1-two-coins) is the
+	// canonical one: `dbl` puts probability 0 on T, so any belief with mass on T
+	// is infinitely surprising to it. JSON has no literal for that, so the API
+	// sends the strings "inf" / "-inf" / "nan". Calling .toExponential() on a
+	// string throws, which used to take out the whole score panel.
+	function fmtScore(v) {
+		if (v === null || v === undefined) return '—';
+		if (v === 'inf') return '∞';
+		if (v === '-inf') return '−∞';
+		if (v === 'nan') return 'NaN';
+		const n = typeof v === 'number' ? v : Number(v);
+		if (Number.isNaN(n)) return 'NaN';
+		if (!Number.isFinite(n)) return n > 0 ? '∞' : '−∞';
+		return n.toExponential(3);
+	}
+
+	// The marginals are the payoff of the whole exercise. "Inc = 0.675" says little
+	// on its own; "Pr(H) = 2/3 at γ=0, 3/4 at γ=1" IS the claim of Ex 4.1.
+	function renderMarginals(marginals) {
+		const host = document.getElementById('score-marginals');
+		host.innerHTML = '';
+		if (!marginals) return;
+		for (const [v, dist] of Object.entries(marginals)) {
+			const row = document.createElement('div');
+			row.className = 'marg-row';
+			const name = document.createElement('span');
+			name.className = 'marg-var';
+			name.textContent = v;
+			const vals = document.createElement('span');
+			vals.className = 'marg-vals';
+			vals.textContent = Object.entries(dist)
+				.map(([k, p]) => `${k} ${Number(p).toFixed(3)}`)
+				.join('  ');
+			row.append(name, vals);
+			host.appendChild(row);
+		}
+	}
+
 	function applyScoreResult(result) {
-		const panel = document.getElementById('score-panel');
-		panel.style.display = '';
-		document.getElementById('score-inc').textContent = result.inc.toExponential(3);
-		document.getElementById('score-idef').textContent = result.idef.toExponential(3);
+		document.getElementById('score-readout').style.display = '';
+		document.getElementById('score-inc').textContent = fmtScore(result.inc);
+		document.getElementById('score-idef').textContent = fmtScore(result.idef);
+		renderMarginals(result.marginals);
 		if (result.edge_scores) pdg.set_edge_scores(result.edge_scores);
 		redraw();
 	}
@@ -152,10 +404,13 @@ $(function() {
 			const res = await fetch('/api/score', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ hypergraph: pdg.state, gamma: 1.0 })
+				body: JSON.stringify({
+					hypergraph: pdg.state, gamma: getGamma(), epsilon: getEpsilon()
+				})
 			});
 			if (!res.ok) throw new Error(await res.text());
 			applyScoreResult(await res.json());
+			lastScoreAction = 'score';
 		} catch(e) {
 			alert('Score failed: ' + e.message);
 		} finally {
@@ -169,10 +424,14 @@ $(function() {
 			const res = await fetch('/api/optimize', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
-				body: JSON.stringify({ hypergraph: pdg.state, gamma: 1.0, iters: 350 })
+				body: JSON.stringify({
+					hypergraph: pdg.state, gamma: getGamma(),
+					epsilon: getEpsilon(), iters: currentIters
+				})
 			});
 			if (!res.ok) throw new Error(await res.text());
 			applyScoreResult(await res.json());
+			lastScoreAction = 'optimize';
 		} catch(e) {
 			alert('Optimize failed: ' + e.message);
 		} finally {
@@ -194,7 +453,13 @@ $(function() {
 			// console.log(e);
 			let ob = JSON.parse(e.target.result);
 			pdg.load(ob);
-			document.getElementById('score-panel').style.display = 'none';
+			hideScoreReadout();
+			lastScoreAction = null;
+			currentIters = DEFAULT_ITERS;
+			// A hand-loaded file is not a catalog entry, so clear the caption rather
+			// than leave the previous example's description attached to it.
+			document.getElementById('example-picker').value = '';
+			showExampleMeta(null);
 			// console.log("LOADED HYPERGRAPH:", ob);
 		};
 		reader.readAsText(evt.target.files[0]);
@@ -211,9 +476,17 @@ $(function() {
 	function redraw() {
 		context.save();
 		context.clearRect(0, 0, canvas.width, canvas.height);
-		
+
 		context.lineWidth = 1.5;
 		context.strokeStyle = "black";
+		// Reset explicitly rather than trusting the incoming state. This function used
+		// to end with an unbalanced save(), so every frame leaked one entry onto the
+		// canvas state stack AND left globalAlpha at the 0.2 used by the box-select
+		// rectangle. The next frame then inherited 0.2: PDGView.draw() sets its own
+		// alpha so arcs were unaffected, but the temp_link rubber band below is drawn
+		// at rgba(...,0.4) and rendered at 0.4*0.2 = 0.08 — all but invisible, which
+		// made "drag out a new arc" look broken in draw mode.
+		context.globalAlpha = 1;
 
 		context.lineCap = 'round';
 		// context.setLineDash([]);
@@ -250,8 +523,9 @@ $(function() {
 			// context.stroke();
 			// context.restore();
 		}
-		
-		
+		// Balances the save() above. Without it the stack grew by one per frame —
+		// ~60/second while dragging, since the drag reheats the simulation.
+		context.restore();
 	}
 
 	d3.select(canvas).call(d3.drag()
@@ -434,7 +708,7 @@ $(function() {
 			// if(!name) return;
 			// pdg.rename_node(obj.id, name);
 		} else if(link) { // inspect selected edge
-			showEdgeInspector(link);
+			showEdgeInspector(link, redraw);
 		} else { // nothing selected; create new variable here.
 			setTimeout(function() {
 				let name = promptForName("Enter A Variable Name",
@@ -535,7 +809,7 @@ $(function() {
 		} else if(mode == 'move') { // selection in manipulate mode
 			pdg.point_select(e, !e.shiftKey);
 			let clickedLink = pdg.pickL(e);
-			if (clickedLink) showEdgeInspector(clickedLink);
+			if (clickedLink) showEdgeInspector(clickedLink, redraw);
 			else if (!pdg.pickN(e)) hideInspector();
 		}
 		// else if(mode == 'select'){

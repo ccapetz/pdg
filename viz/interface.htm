@@ -55,6 +55,19 @@
 		</div>
 		
 	
+		<!-- Example picker. Top-centre on purpose: this is the "what am I looking at"
+		     affordance, so it sits above the graph rather than competing with the
+		     tool buttons bottom-right. Populated at runtime from examples/catalog.json. -->
+		<div id="example-panel" class="example-panel">
+			<select id="example-picker" class="example-select" aria-label="Load a dissertation example">
+				<option value="">Loading examples…</option>
+			</select>
+			<div class="example-meta">
+				<span id="example-source" class="example-source"></span>
+				<span id="example-note" class="example-note"></span>
+			</div>
+		</div>
+
 		<div id="help-panel" class="help-panel">
 			<button id="help-toggle" class="help-toggle" aria-expanded="false" aria-controls="help-body">
 				Help <span class="help-chevron">▾</span>
@@ -98,9 +111,33 @@
 			</div>
 		</div>
 
-		<div id="score-panel" class="score-panel" style="display:none">
-			<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
-			<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
+		<!-- Inputs (γ, ε) live in the same panel as the outputs (Inc, IDef, marginals)
+		     they govern. The controls are always visible; the readout appears once you
+		     have actually run Score or Optimize. -->
+		<div id="score-panel" class="score-panel">
+			<div class="score-controls">
+				<div class="ctl-row">
+					<label class="ctl-label" for="gamma-slider" title="Weight on structural deficiency SDef. [[M]]_γ = OInc + γ·SDef">γ</label>
+					<input type="range" id="gamma-slider" min="0" max="1" step="0.01" value="1">
+					<output id="gamma-val" class="ctl-val" for="gamma-slider">1.00</output>
+				</div>
+				<div class="ctl-row">
+					<!-- ε is a workaround for the opt_joint hard-zero divergence, not a
+					     modelling knob — hence a few discrete values rather than a slider. -->
+					<label class="ctl-label" for="epsilon-select" title="Smoothing: p' = (1−ε)p + ε·unif. Workaround for the optimizer diverging on exact zeros.">ε</label>
+					<select id="epsilon-select" class="ctl-select">
+						<option value="0" selected>0 (off)</option>
+						<option value="0.0001">1e−4</option>
+						<option value="0.001">1e−3</option>
+						<option value="0.01">1e−2</option>
+					</select>
+				</div>
+			</div>
+			<div id="score-readout" class="score-readout" style="display:none">
+				<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
+				<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
+				<div id="score-marginals" class="score-marginals"></div>
+			</div>
 		</div>
 
 		<canvas id="canvas" width="100%" height="100%" class="fullsize z1"></canvas>
@@ -124,6 +161,28 @@
 						<div class="text-muted small mb-1">Targets</div>
 						<div class="inspector-tgts fw-semibold font-monospace small"></div>
 					</div>
+					<hr class="my-2">
+					<!-- α and β are per-arc confidences, not part of the cpd: α is
+					     confidence in the functional dependence, β confidence in the
+					     cpd itself. Text inputs rather than number, because "inf" is a
+					     legal value (a hard constraint) and JSON has no infinity
+					     literal — server.py's _as_weight accepts "inf"/"∞". -->
+					<div class="d-flex gap-2 mb-1">
+						<div class="flex-fill">
+							<label class="text-muted small mb-1" for="inspector-alpha">&alpha; <span class="text-body-tertiary">structural</span></label>
+							<input type="text" inputmode="decimal" id="inspector-alpha"
+							       class="form-control form-control-sm font-monospace weight-input"
+							       placeholder="1 (default)" autocomplete="off">
+						</div>
+						<div class="flex-fill">
+							<label class="text-muted small mb-1" for="inspector-beta">&beta; <span class="text-body-tertiary">cpd</span></label>
+							<input type="text" inputmode="decimal" id="inspector-beta"
+							       class="form-control form-control-sm font-monospace weight-input"
+							       placeholder="1 (default)" autocomplete="off">
+						</div>
+					</div>
+					<div class="inspector-weight-hint text-body-tertiary" style="font-size:.7rem"></div>
+
 					<hr class="my-2">
 					<div class="text-muted small mb-2">CPD</div>
 					<div class="inspector-cpd"></div>

@@ -57,6 +57,10 @@ function PDGView(hypergraph, mousept) {
 	// let 
 		
 	let simulation = undefined
+	// Whether the hypergraph currently loaded shipped its own `viz` coordinates.
+	// Read by mk_simulation(), which runs AFTER the constructor's load() and would
+	// otherwise scramble a hand-placed layout. See the note there.
+	let has_pinned_layout = false
 	// 
 	svgg = d3.select("#svg").append("g")
 		.classed("PDG", true)
@@ -70,6 +74,8 @@ function PDGView(hypergraph, mousept) {
 			simulation.stop();
 		}
 		
+		has_pinned_layout = !!hypergraph.viz;
+
 		// clear state
 		parentLinks = [];
 		lookup = { "<MOUSE>" :  mousept };
@@ -129,6 +135,28 @@ function PDGView(hypergraph, mousept) {
 			}
 		}
 
+		// Per-arc confidences. These have to survive the browser round-trip: the UI
+		// posts `pdg.state` (i.e. current_hypergraph()) to /api/score and
+		// /api/optimize, so anything not carried here is silently replaced by the
+		// server's default of 1.0. That is not cosmetic — c7-factorgraph-merged
+		// differs from c7-factorgraph-drift ONLY in alpha (.5 vs 1 on each of J1,J2),
+		// and dropping it collapsed the two onto the same answer (.842) instead of
+		// the .842-vs-.700 split that is the whole point of Ex 3.6.
+		//
+		// Values are stored verbatim rather than parsed, because "inf"/"∞" are legal
+		// JSON forms that server.py's _as_weight understands; coercing here would
+		// only lose that.
+		if(hypergraph.alpha) {
+			for(let l of links) {
+				if(l.label in hypergraph.alpha) l.alpha = hypergraph.alpha[l.label];
+			}
+		}
+		if(hypergraph.beta) {
+			for(let l of links) {
+				if(l.label in hypergraph.beta) l.beta = hypergraph.beta[l.label];
+			}
+		}
+
 		
 		// if simulation exists, update nodes & edges of simulation + restart.
 		if(typeof simulation != "undefined") {
@@ -146,11 +174,27 @@ function PDGView(hypergraph, mousept) {
 				reinitialize_node_positions();
 			}
 			else {
-				ontick();
-				simulation.alpha(0.05).restart();
+				settle_pinned_layout();
 			}
-			
+
 		}
+	}
+
+	// A file that carries `viz` coords has already been laid out — by hand, or by
+	// gen_catalog_examples.py so it matches the dissertation figure. Reheating the
+	// simulation, even to alpha 0.05, walks everything off those coordinates: the
+	// bipartite force drags link-nodes toward their variables, so what you see
+	// depends on how long ago the file loaded. That made the C7 pair — identical
+	// layouts, on purpose, so that only α differs — render as two visibly different
+	// pictures, which is the opposite of the point.
+	//
+	// ontick() alone recomputes every path2d from the current positions, so the
+	// layout draws correctly without the simulation running at all. Dragging
+	// reheats via alphaTarget (pdgviz.js:487), so interaction is unaffected; force
+	// layout stays available for AUTHORING and is simply not the reading mode.
+	function settle_pinned_layout() {
+		simulation.stop();
+		ontick();
 	}
 	
 	function current_hypergraph() {
@@ -163,11 +207,21 @@ function PDGView(hypergraph, mousept) {
 		for(let l of links) {
 			if(l.cpd) cpds[l.label] = l.cpd;
 		}
+		// α and β, same deal as cpds: omitted entirely when no arc carries one, so
+		// that the server falls through to the PDG default rather than receiving a
+		// map of explicit 1.0s that would obscure "unset" vs "set to 1".
+		let alpha = {}, beta = {};
+		for(let l of links) {
+			if(l.alpha !== undefined) alpha[l.label] = l.alpha;
+			if(l.beta  !== undefined) beta[l.label]  = l.beta;
+		}
 
 		return {
 			nodes : nodes.map(n => n.id),
 			hedges : hedges,
 			cpds : Object.keys(cpds).length ? cpds : undefined,
+			alpha : Object.keys(alpha).length ? alpha : undefined,
+			beta : Object.keys(beta).length ? beta : undefined,
 			viz : {
 				nodes : Object.fromEntries(nodes.map(
 						n => [n.id, cloneAndPluck(n, ["x", "y", "w", "h", "selected", "expanded"])]
@@ -345,7 +399,11 @@ function PDGView(hypergraph, mousept) {
 		// }
 		for (let ln of linknodes) {
 			let l = ln.link;
-			[l.path2d, ln.true_mid] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true, (l.lw|2)*1.5+6);
+			// `l.lw ?? 2`, not `l.lw | 2`: the inherited idiom was a BITWISE or, which
+			// happens to yield 2 for undefined but silently corrupts real widths —
+			// the hover highlight sets l.lw = 5 (pdgviz.js:884) and 5|2 renders as 7.
+			// Harmless while nothing multiplied it; beta_scale now does.
+			[l.path2d, ln.true_mid] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true, (l.lw ?? 2)*1.5+6);
 		}
 
 		// clamp to within boundary
@@ -361,8 +419,34 @@ function PDGView(hypergraph, mousept) {
 	}
 	let _inc_max = 0;
 
+	// The API sends non-finite scores as the strings "inf" / "-inf" / "nan",
+	// because JSON has no literal for them. Ex 2.1 (c1-two-coins) genuinely
+	// optimizes to Inc = ∞, so this is a normal value, not an error.
+	function parse_score(v) {
+		if (v === null || v === undefined) return null;
+		if (typeof v === 'number') return v;
+		if (v === 'inf') return Infinity;
+		if (v === '-inf') return -Infinity;
+		if (v === 'nan') return NaN;
+		const n = Number(v);
+		return Number.isNaN(n) ? null : n;
+	}
+
+	// Infinite inconsistency is a DIFFERENT KIND of thing, not just a large number,
+	// so it gets its own channel rather than the top of the ramp. In Ex 2.1 the
+	// worst finite edge (`fair`, 0.326) is also the ramp max, so pinning ∞ to t=1
+	// rendered both edges the same red — erasing the asymmetry that IS the example.
+	// Hue plus dash pattern, so the distinction survives red/magenta colorblindness.
+	const INC_INF_COLOR = 'rgb(190,0,190)';
+
+	function is_inf_score(l) {
+		return l && l.inc_score === Infinity;
+	}
+
 	function inc_color(l) {
-		if (l.inc_score == null || _inc_max === 0) return null;
+		if (l.inc_score == null || Number.isNaN(l.inc_score)) return null;
+		if (l.inc_score === Infinity) return INC_INF_COLOR;
+		if (_inc_max === 0) return null;
 		const t = Math.min(1, l.inc_score / _inc_max);
 		const r = Math.round(220 * t + 60 * (1 - t));
 		const g = Math.round(30 * t + 120 * (1 - t));
@@ -370,22 +454,73 @@ function PDGView(hypergraph, mousept) {
 		return `rgb(${r},${g},${b})`;
 	}
 
-	function draw(context) {
-		context.save();
+	// Mirrors server.py's _as_weight: α/β may arrive as the strings "inf" / "∞",
+	// since JSON has no infinity literal.
+	function as_weight(v) {
+		if (v === null || v === undefined) return null;
+		if (typeof v === 'number') return Number.isNaN(v) ? null : v;
+		if (v === 'inf' || v === '∞' || v === 'Infinity') return Infinity;
+		const n = Number(v);
+		return Number.isNaN(n) ? null : n;
+	}
 
+	// β = confidence in the cpd, so it maps to how heavily the arc is drawn.
+	// Log scale, because β is precision-like and people set it to 1, 10, 100 —
+	// linear thickness would make β=10 a slab and β=100 unusable. Pinned so that
+	// β=1, the default, reproduces the previous width exactly; an unset β must not
+	// change how anything already on disk looks.
+	const BETA_LW_MIN = 0.4, BETA_LW_MAX = 3;
+	function beta_scale(l) {
+		const b = as_weight(l.beta);
+		if (b === null || !(b > 0)) return 1;
+		if (!Number.isFinite(b)) return BETA_LW_MAX;
+		return Math.min(BETA_LW_MAX, Math.max(BETA_LW_MIN, 1 + 0.6 * Math.log2(b)));
+	}
+
+	// α = confidence in the functional dependence. Opacity, because it is the only
+	// channel left: thickness is β, hue is the inconsistency score, and dash is
+	// reserved for Inc=∞. Floored at 0.3 so an α=0 arc is still findable and
+	// clickable rather than invisible. Together these make "proper PDG" (β ≫ α) a
+	// property you can see — a thick, faint arc — instead of one you have to query.
+	function alpha_opacity(l) {
+		const a = as_weight(l.alpha);
+		if (a === null || !Number.isFinite(a)) return 1;
+		return Math.min(1, Math.max(0.3, 0.3 + 0.7 * Math.min(a, 1)));
+	}
+
+	function draw(context) {
+		// try/finally so the save() is always balanced. `context.stroke(path2d)`
+		// throws if path2d is undefined, which is reachable: a newly drawn arc has no
+		// path2d until the next ontick(), and restyle_links() can repaint() inside
+		// that window. Previously an escaping exception skipped restore() and grew the
+		// canvas state stack by one every frame; now it would also strand globalAlpha
+		// mid-link, tinting everything drawn afterwards.
+		context.save();
+		try {
 		context.globalAlpha = 1;
 		for( let l of links) {
 			// let lw = l.hasAttribute('lw')? l.lw : 2;
 			if(!l.display) continue;
-			let lw = l.lw | 2;
+			let lw = (l.lw ?? 2) * beta_scale(l);
+			context.globalAlpha = 1;
 			context.lineWidth = lw * 1.2 + 3;
+			// Casing stays opaque even when the arc itself is faded: it is there for
+			// legibility against whatever the arc crosses, not to carry data.
 			context.strokeStyle = l.selected ? "rgba(230, 150, 50, 0.4)" : "rgba(255, 255, 255, 0.7)";
 			context.stroke(l.path2d);
 
+			context.globalAlpha = alpha_opacity(l);
 			context.lineWidth =  lw;
 			const col = inc_color(l);
 			context.strokeStyle = l.selected ? "#863" : (col || "black");
+			// Dash infinitely-inconsistent edges: a second, redundant cue so the
+			// "this cpd assigns probability 0 to something you believe" case is
+			// legible without relying on hue alone.
+			const dashed = is_inf_score(l) && !l.selected;
+			if (dashed) context.setLineDash([Math.max(4, lw * 2), Math.max(3, lw)]);
 			context.stroke(l.path2d);
+			if (dashed) context.setLineDash([]);
+			context.globalAlpha = 1;
 			// context.lineWidth = 1;
 			// context.setLineDash([4,1]);
 			// context.strokeStyle = 'red';
@@ -434,7 +569,9 @@ function PDGView(hypergraph, mousept) {
 		});
 
 		// context.fillStyle="#888";
-		context.restore();
+		} finally {
+			context.restore();
+		}
 
 	
 		//draw the linknodes 
@@ -560,8 +697,24 @@ function PDGView(hypergraph, mousept) {
 			.on("tick", ontick)
 			.stop();
 		simulation.alphaDecay(0.05);
-			
-		setTimeout(reinitialize_node_positions, 10);
+
+		// A hypergraph carrying explicit `viz` coords has already been laid out — by
+		// hand, or by gen_catalog_examples.py so it matches the dissertation figure.
+		// Re-initializing destroys that. `load()` has always guarded this, but the
+		// CONSTRUCTOR path could not: it calls load() while `simulation` is still
+		// undefined, so the guard was skipped and this unconditional timeout fired.
+		// Net effect was that the FIRST model shown was always scrambled while every
+		// model loaded afterwards came up correctly — reinitialize_node_positions maps
+		// x → x*10.8 + width/2, which suits d3's unit-scale defaults but sends a pinned
+		// x=400 to 5040, far off-canvas, after which the forces drag it back into a
+		// corner clump.
+		setTimeout(function () {
+			if (has_pinned_layout) {
+				settle_pinned_layout();
+			} else {
+				reinitialize_node_positions();
+			}
+		}, 10);
 	}
 	function update_simulation() {
 		if (typeof simulation != 'undefined') {
@@ -763,7 +916,7 @@ function PDGView(hypergraph, mousept) {
 	}
 	function picksL(pt, l, extra_lw) {
 		context.save();
-		context.lineWidth = extra_lw + (l.lw | 2);
+		context.lineWidth = extra_lw + (l.lw ?? 2);
 		let b = context.isPointInStroke(l.path2d, pt.x, pt.y);
 		context.restore();
 		return b;
@@ -774,7 +927,7 @@ function PDGView(hypergraph, mousept) {
 		let l;
 		for(let ln of linknodes) {
 			l = ln.link;
-			context.lineWidth = extra_lw + (l.lw | 2);
+			context.lineWidth = extra_lw + (l.lw ?? 2);
 			if( context.isPointInStroke(l.path2d, pt.x, pt.y) ) {
 				context.restore();
 				return return_ln ? ln : l;
@@ -971,11 +1124,16 @@ function PDGView(hypergraph, mousept) {
 		delete_selection : delete_selection,
 		update_simulation : update_simulation,
 		set_edge_scores(scores) {
-			const vals = Object.values(scores).filter(v => v > 0);
-			_inc_max = vals.length ? Math.max(...vals) : 0;
 			for (const l of links) {
-				l.inc_score = scores[l.label] ?? null;
+				l.inc_score = parse_score(scores[l.label]);
 			}
+			// Normalize the ramp against FINITE scores only — otherwise a single
+			// infinite edge sends _inc_max to Infinity and every finite edge
+			// collapses to t = 0 (the ramp degenerates to solid blue).
+			const finite = links
+				.map(l => l.inc_score)
+				.filter(v => v != null && Number.isFinite(v) && v > 0);
+			_inc_max = finite.length ? Math.max(...finite) : 0;
 		},
 		get state() {
 			return current_hypergraph();

@@ -1,0 +1,102 @@
+[
+  {
+    "file": "smoking-cpd.json",
+    "title": "Smoking (BN as PDG)",
+    "source": "Ex 3.2, p. 56",
+    "tier": "Baseline",
+    "note": "A Bayesian network is a PDG with no conflict — Inc ≈ 0. The consistent control case.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 800
+  },
+  {
+    "file": "t0-1-chain.json",
+    "title": "Chain  A → B → C",
+    "source": "Fig 2.1, p. 35",
+    "tier": "Tier 0",
+    "note": "Structure only, no cpds. Exercises the renderer, not the math.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 50
+  },
+  {
+    "file": "t0-2-split-merge.json",
+    "title": "Split and merge",
+    "source": "Fig 2.1, p. 35",
+    "tier": "Tier 0",
+    "note": "Fan-out from A plus a multi-source hyperarc into D.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 50
+  },
+  {
+    "file": "t0-3-cyclic.json",
+    "title": "Cyclic  A ⇄ B",
+    "source": "Fig 2.1, p. 35",
+    "tier": "Tier 0",
+    "note": "A 2-cycle. Ordinary Bayesian networks forbid this; PDGs do not.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 50
+  },
+  {
+    "file": "t0-4-conflicted.json",
+    "title": "Conflicted (two arcs into B)",
+    "source": "Fig 2.1, p. 35",
+    "tier": "Tier 0",
+    "note": "The 'hello world' of PDGs: two arcs both determine B.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 50
+  },
+  {
+    "file": "c1-two-coins.json",
+    "title": "Two coins",
+    "source": "Ex 2.1, p. 49",
+    "tier": "Tier 1",
+    "note": "The smallest genuinely inconsistent PDG, and inconsistency here is ASYMMETRIC: `dbl` puts 0 on T, so mass on T is infinitely surprising to it — but not conversely. Optimize → Inc = ∞ (magenta dashed edge). Set ε = 1e-3 to recover the true minimum, ln 2 ≈ 0.693.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 2000
+  },
+  {
+    "file": "c4-grok-parallel.json",
+    "title": "Grok — parallel arcs disagree slightly",
+    "source": "Ex 3.4, pp. 59–60",
+    "tier": "Tier 1",
+    "note": "Two arcs T→C that disagree only slightly. Inc ≈ 0.155 — finite, and far below C1's ∞. 'Not all inconsistencies are equally egregious.'",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 800
+  },
+  {
+    "file": "c7-factorgraph-drift.json",
+    "title": "Factor graph drift (α = 1 each)",
+    "source": "Ex 3.6, p. 89",
+    "tier": "Tier 1",
+    "note": "Two arcs that AGREE — both carry µ_.7. Yet Score (the factor product) drifts to .845 = .7²/(.7²+.3²), and Optimize to .842. The factor graph moves even though both sources say exactly the same thing.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 800
+  },
+  {
+    "file": "c7-factorgraph-merged.json",
+    "title": "Factor graph fixed (α = .5 each)",
+    "source": "Ex 3.6, p. 90",
+    "tier": "Tier 1",
+    "note": "The same model with α_J1 + α_J2 = 1. Press Optimize: Pr(x1) stays at .700 where the previous example drifts to .842. Score still reads .845 for both — factor_product weights by β only — but its IDef separates them (0 here, .62 there). The diff is one pair of numbers.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 800
+  },
+  {
+    "file": "c8-modeled-bias.json",
+    "title": "Coin with a modeled bias",
+    "source": "Ex 4.1, pp. 121–122",
+    "tier": "Tier 1",
+    "note": "Naive maxent over {µ_.5, δ_H} returns .5 — the double-headed coin makes NO difference. Model the bias explicitly and .5 becomes unreachable: drag γ from 0 to 1 and watch Pr(H) move 2/3 → 3/4.",
+    "gamma": 1.0,
+    "epsilon": 0.001,
+    "iters": 2000
+  }
+]

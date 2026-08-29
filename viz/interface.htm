@@ -188,6 +188,36 @@
 					<div class="inspector-cpd"></div>
 				</div>
 			</div>
+
+			<!-- Pinned to the BOTTOM of the inspector column, not tucked into the
+			     empty state: the colours it explains are on screen exactly when an
+			     arc is selected, which is when the empty state is hidden. Legend in
+			     the help dropdown would have the same flaw — that panel is a modal
+			     shortcut reference you open and close, whereas this describes what
+			     you are looking at right now. -->
+			<div class="inspector-legend">
+				<div class="legend-title">Arc colour <span class="legend-cite">Fig 3.4, p.&nbsp;75</span></div>
+
+				<div class="legend-ramp" role="img" aria-label="scale from grey at zero to red at maximum"></div>
+				<div class="legend-ramp-ends">
+					<span>0 neutral</span><span>worse fit</span>
+				</div>
+
+				<div class="legend-row">
+					<span class="legend-swatch legend-inf"></span>
+					<span><b>&infin;</b> cpd rules out something believed</span>
+				</div>
+				<div class="legend-row">
+					<span class="legend-swatch legend-green"></span>
+					<span>better fit (&minus;1) &mdash; arcs never score below 0</span>
+				</div>
+				<div class="legend-row">
+					<span class="legend-swatch legend-select"></span>
+					<span>selected (not a score)</span>
+				</div>
+
+				<div class="legend-geom">&beta; sets thickness &middot; &alpha; sets opacity</div>
+			</div>
 		</div>
 		
 		<script src="https://cdnjs.cloudflare.com/ajax/libs/jquery/3.6.0/jquery.min.js"></script><!-- JQuery -->

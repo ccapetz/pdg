@@ -515,7 +515,10 @@ $(function() {
 		if( action.type == 'box-select' && action.start) {
 			// console.log(...corners2xywh(select_rect_start, select_rect_end))
 			// context.save();
-			context.fillStyle="orange";
+			// Box-select tint: violet, matching the selection family rather than
+			// borrowing a hue from the semantic score ramp.
+			context.fillStyle = getComputedStyle(document.documentElement)
+				.getPropertyValue('--pdg-select').trim() || "#5f5498";
 			
 			// context.fillRect(select_rect_start.x, select_rect_start.y, select_rect_end.x, select_rect_end.y);
 			// let [xmin,ymin,w,h] = corners2xywh(select_rect_start, select_rect_end);

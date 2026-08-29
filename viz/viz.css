@@ -53,6 +53,39 @@
 	   srcs/tgts, the α/β inputs). Repoint the variable it reads so those follow
 	   the token too, instead of quietly drifting to a different mono stack. */
 	--bs-font-monospace: var(--font-mono);
+
+	/* ── Semantic palette, sampled from the dissertation ──────────────────────
+	   Not invented: these are the dominant fill colours measured off a 200-dpi
+	   render of Figure 3.4 (p. 75), whose caption fixes their meaning —
+	   "Green stands for -1 (indicating that information in this component makes
+	   for a better fit to A), while red stands for +1 (... a worse fit), and
+	   gray stands for 0 (which is neutral)."
+
+	   The ramp therefore runs GREY -> RED, not blue -> red. Green is deliberately
+	   NOT the low end: per-arc inconsistency is a weighted KL divergence
+	   (server.py `_edge_scores`), so it is always >= 0. Painting a small positive
+	   score green would claim the arc improves the fit, which is a different
+	   proposition from "this arc is only slightly inconsistent". Green is held in
+	   reserve for genuinely negative contributions. */
+	--pdg-green: #487050;   /* -1 : better fit  (reserved) */
+	--pdg-grey:  #b8b8b8;   /*  0 : neutral                */
+	--pdg-red:   #884838;   /* +1 : worse fit              */
+	--pdg-ink:   #201820;   /* strokes and text            */
+	--pdg-lavender: #e4e0f0; /* his "highlight this region" panel fill */
+	--pdg-lavender-edge: #a9a2c6;
+
+	/* Off the end of the scale. The dissertation has no encoding for infinite
+	   inconsistency, so this is the one colour here with no source in it; it is a
+	   deepened form of --pdg-red so the ramp stays monotone, and the dashed stroke
+	   carries the categorical "this is not a number on the scale" signal. */
+	--pdg-inf: #4a1f2e;
+
+	/* Selection sits OUTSIDE the semantic ramp on purpose. If picking an arc tinted
+	   it somewhere on grey->red, a selected arc would be indistinguishable from a
+	   scored one. Violet is adjacent to his lavender highlight and appears nowhere
+	   in the score scale. */
+	--pdg-select: #5f5498;
+	--pdg-select-casing: rgba(228,224,240,0.85);
 }
 
 .fullsize {
@@ -80,9 +113,85 @@
 	height: 100%;
 	background: rgba(255,255,255,0.97);
 	border-left: 1px solid #dee2e6;
-	overflow-y: auto;
+	/* Column layout so the legend can sit at the bottom while the empty state and
+	   the CPD content share the space above it. The scroll moves to the upper
+	   region, otherwise a long CPD table would push the legend off-screen. */
+	display: flex;
+	flex-direction: column;
+	overflow: hidden;
 	box-shadow: -2px 0 12px rgba(0,0,0,0.12);
 	z-index: 5;
+}
+.inspector-empty { flex: 1 1 auto; }
+.inspector-content { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+/* ── Legend ─────────────────────────────────────────────────────────────── */
+.inspector-legend {
+	flex: 0 0 auto;
+	border-top: 1px solid #dee2e6;
+	padding: 0.6rem 0.75rem 0.7rem;
+	background: #fbfbfc;
+	font-size: 0.68rem;
+	line-height: 1.35;
+	color: #495057;
+}
+.legend-title {
+	font-weight: 600;
+	font-size: 0.7rem;
+	color: #343a40;
+	margin-bottom: 0.4rem;
+	display: flex;
+	justify-content: space-between;
+	align-items: baseline;
+	gap: 0.4rem;
+}
+.legend-cite {
+	font-family: var(--font-math);
+	font-style: italic;
+	font-weight: 400;
+	color: #868e96;
+	font-size: 0.65rem;
+}
+.legend-ramp {
+	height: 9px;
+	border-radius: 2px;
+	border: 1px solid #ced4da;
+	background: linear-gradient(to right, var(--pdg-grey), var(--pdg-red));
+}
+.legend-ramp-ends {
+	display: flex;
+	justify-content: space-between;
+	color: #868e96;
+	font-size: 0.63rem;
+	margin: 0.15rem 0 0.45rem;
+}
+.legend-row {
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	margin-bottom: 0.22rem;
+}
+.legend-swatch {
+	flex: 0 0 auto;
+	width: 15px;
+	height: 9px;
+	border-radius: 2px;
+	border: 1px solid #ced4da;
+}
+.legend-green  { background: var(--pdg-green); }
+.legend-select { background: var(--pdg-select); }
+/* Dashed, mirroring how an infinite-score arc is actually stroked on canvas. */
+.legend-inf {
+	background: repeating-linear-gradient(90deg,
+		var(--pdg-inf) 0 4px, transparent 4px 7px);
+	border-color: var(--pdg-inf);
+}
+.legend-geom {
+	margin-top: 0.45rem;
+	padding-top: 0.4rem;
+	border-top: 1px dotted #dee2e6;
+	font-family: var(--font-math);
+	color: #868e96;
 }
 
 .inspector-empty {
@@ -149,7 +258,12 @@
 }
 
 .node:not(.expanded) .node-label {
-	color: black;
+	/* Variables are mathematical objects and are set as such throughout the
+	   dissertation: italic serif, never the UI sans. This is the single change
+	   that does most to make the canvas read like Figure 3.2b. */
+	font-family: var(--font-math);
+	font-style: italic;
+	color: var(--pdg-ink);
 }
 
 .node.expanded > .nodeshape {
@@ -162,13 +276,18 @@
 }
 .node.expanded.selected .node-label {
 	font-family: var(--font-math);
-	color: orange;
-	text-shadow: 1px 1px 0 red;
+	/* Was orange-on-red. Red now MEANS "worse fit" (Fig 3.4), so spending it on a
+	   selection state makes selection look like a score. Violet family instead. */
+	color: #cfc7f0;
+	text-shadow: 1px 1px 0 var(--pdg-select);
 	font-weight: bold;
 }
 
 .linknode .linknode-label {
-	color: black;
+	/* Arc labels are cpd names (p, q, s1) — also mathematical objects. */
+	font-family: var(--font-math);
+	font-style: italic;
+	color: var(--pdg-ink);
 }
 
 .linknode:not(.selected) .linknode-label-fo {
@@ -176,27 +295,32 @@
 }
 
 .linknode.selected .linknode-label {
+	color: var(--pdg-select);
 	text-shadow:
-		0 0 3px rgba(230,150,50,0.7),
-		0 0 3px rgba(230,150,50,0.7),
-		0 0 6px rgba(230,150,50,0.5);
+		0 0 3px rgba(228,224,240,0.95),
+		0 0 3px rgba(228,224,240,0.95),
+		0 0 6px rgba(169,162,198,0.6);
 }
 .node:not(.selected):not(.expanded) > .nodeshape {
-	fill : rgba(200,200,200, 0.3);
+	/* Figure 3.2b draws variables as white-filled rounded rects with a thin dark
+	   outline, not grey-filled ones. White fill also stops nodes from tinting the
+	   arcs that pass behind them now that arc colour carries meaning. */
+	fill : #ffffff;
 	stroke-width: 1px;
-	stroke: #888;
+	stroke: var(--pdg-ink);
 }
 .node.selected:not(.expanded) > .nodeshape {
-	fill : rgba(230, 150, 50, 0.4);
+	fill : var(--pdg-lavender);
 }
 .node.selected > .nodeshape {
 	stroke-width: 2px;
-	stroke: #863;
+	stroke: var(--pdg-select);
 }
 
 .node.anchored > .nodeshape {
 	/* stroke-dasharray : "4 1"; */
-	fill: rgba(100,20,20) !important;
+	/* Anchored (pinned by the user) — a UI state, so kept off the score ramp. */
+	fill: var(--pdg-select) !important;
 }
 
 

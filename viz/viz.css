@@ -6,10 +6,13 @@
 }
 
 .toolbar {
-	position: absolute;
-	bottom: 1em;
-	right:1em;
-	z-index:10;
+	/* fixed rather than absolute purely for consistency with the other floating
+	   panels; body is 100%/100% with no transformed ancestor, so this resolves to
+	   the same box either way. */
+	position: fixed;
+	bottom: var(--gutter);
+	right: var(--rail-right);
+	z-index: 10;
 }
 
 
@@ -24,7 +27,32 @@
 }
 
 :root {
+	/* The inspector is a permanent column, not an overlay: #inspector is never
+	   hidden (showEdgeInspector only swaps .inspector-empty for
+	   .inspector-content), so this width is always spoken for. Anything pinned to
+	   the right edge must offset by it rather than by a bare gutter, or it lands
+	   on top — which is exactly what the toolbar and score panel used to do,
+	   winning on z-index (10 vs 5) and covering the CPD table. */
 	--inspector-width: 280px;
+	--gutter: 1rem;
+	--rail-right: calc(var(--inspector-width) + var(--gutter));
+
+	/* Named so the example panel can do its clearance arithmetic against the help
+	   panel symbolically instead of via a magic 34rem. */
+	--help-width: 220px;
+
+	/* Three fonts, three jobs. Serif is the signal for "this is a mathematical
+	   object" — variable names, arc labels, γ/ε/Inc/IDef. Spending it on chrome
+	   spends the signal for nothing, which is how we ended up with system-ui,
+	   serif, monospace and italic mixed ad hoc across five panels. */
+	--font-ui: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", sans-serif;
+	--font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+	--font-math: "Latin Modern Roman", Cambria, Georgia, "Times New Roman", serif;
+
+	/* interface.htm uses Bootstrap's .font-monospace utility directly (inspector
+	   srcs/tgts, the α/β inputs). Repoint the variable it reads so those follow
+	   the token too, instead of quietly drifting to a different mono stack. */
+	--bs-font-monospace: var(--font-mono);
 }
 
 .fullsize {
@@ -68,7 +96,7 @@
 }
 
 .inspector-label {
-	font-family: serif;
+	font-family: var(--font-math);   /* an arc label is a mathematical object */
 	font-size: 1rem;
 }
 
@@ -88,6 +116,7 @@
 	border: none;
 	background: transparent;
 	text-align: center;
+	font-family: var(--font-mono);   /* probabilities: align the decimal points */
 	font-size: 0.75rem;
 	padding: 0;
 }
@@ -114,7 +143,7 @@
 	height: 100%;
 	box-sizing: border-box;
 	pointer-events: none;
-	font-family: serif;
+	font-family: var(--font-math);   /* variable names */
 	overflow: visible;
 	white-space: nowrap;
 }
@@ -127,12 +156,12 @@
 	fill : rgba(20, 20, 20, 0.95);
 }
 .node.expanded .node-label {
-	font-family: serif;
+	font-family: var(--font-math);
 	color: white;
 	text-shadow: 0 0 4px black;
 }
 .node.expanded.selected .node-label {
-	font-family: serif;
+	font-family: var(--font-math);
 	color: orange;
 	text-shadow: 1px 1px 0 red;
 	font-weight: bold;
@@ -182,21 +211,34 @@ body,html {
 	height: 100%;
 }
 
+/* One UI font, declared once and inherited, so the panels below only have to
+   name the two exceptions: mono for numeric readouts, serif for maths. */
+body {
+	font-family: var(--font-ui);
+}
+
 .help-panel {
 	position: fixed;
-	top: 1rem;
-	left: 1rem;
+	top: var(--gutter);
+	left: var(--gutter);
 	z-index: 10;
-	width: 220px;
+	width: var(--help-width);
 	background: rgba(255, 255, 255, 0.97);
 	border: 1px solid #dee2e6;
 	border-radius: 6px;
 	box-shadow: 0 2px 10px rgba(0,0,0,0.1);
 	font-size: 0.78rem;
+	/* Fully expanded this panel is ~638px of opaque slab. On a short viewport it
+	   ran off the bottom with no way to reach the clipped rows; scroll it instead
+	   of letting it overflow. Does not make it less obtrusive when open — that is
+	   a density question, left alone for now. */
+	max-height: calc(100vh - 2 * var(--gutter));
+	overflow-y: auto;
 }
 
 .help-toggle {
 	width: 100%;
+	font-family: inherit;   /* <button> does not inherit font-family on its own */
 	background: none;
 	border: none;
 	padding: 0.4rem 0.65rem;
@@ -245,8 +287,15 @@ body,html {
 }
 
 .help-row kbd {
+	font-family: var(--font-mono);
 	font-size: 0.68rem;
 	padding: 0.1em 0.35em;
+	/* Bootstrap's kbd default is `color: var(--bs-body-bg)` — white text, meant to
+	   sit on its dark default chip. This rule overrode `background` to a light
+	   grey but never `color`, leaving white on #f1f3f5: a contrast ratio of
+	   1.11:1 against the 4.5:1 WCAG AA needs. The chips rendered as blank
+	   rectangles. Setting the paired colour is the whole fix. */
+	color: #212529;
 	background: #f1f3f5;
 	border: 1px solid #ced4da;
 	border-radius: 3px;
@@ -266,8 +315,8 @@ body,html {
 
 .score-panel {
 	position: fixed;
-	bottom: 4rem;
-	right: 1rem;
+	bottom: 4rem;      /* clears the toolbar, which sits at bottom: var(--gutter) */
+	right: var(--rail-right);
 	z-index: 10;
 	background: rgba(255,255,255,0.95);
 	border: 1px solid #dee2e6;
@@ -284,12 +333,162 @@ body,html {
 	gap: 1rem;
 }
 
+/* Inc and IDef are named quantities, so serif-italic — the same treatment γ and ε
+   get below, rather than the plain italic they had before. */
 .score-label {
+	font-family: var(--font-math);
 	font-style: italic;
 	color: #6c757d;
 }
 
 .score-val {
-	font-family: monospace;
+	font-family: var(--font-mono);
 	font-weight: 600;
+}
+
+/* ── γ / ε controls ─────────────────────────────────────────────────────── */
+
+.score-controls {
+	display: flex;
+	flex-direction: column;
+	gap: 0.3rem;
+}
+
+.ctl-row {
+	display: flex;
+	align-items: center;
+	gap: 0.5rem;
+}
+
+.ctl-label {
+	font-family: var(--font-math);
+	font-style: italic;
+	font-size: 0.95rem;
+	color: #495057;
+	width: 1rem;
+	text-align: center;
+	cursor: help;
+	margin: 0;
+}
+
+.ctl-row input[type="range"] {
+	flex: 1;
+	min-width: 90px;
+	accent-color: #0d6efd;
+	cursor: pointer;
+}
+
+.ctl-val {
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	color: #495057;
+	width: 2.5rem;
+	text-align: right;
+}
+
+.ctl-select {
+	flex: 1;
+	font-size: 0.72rem;
+	font-family: var(--font-mono);
+	padding: 0.1rem 0.2rem;
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	background: #fff;
+	color: #495057;
+	cursor: pointer;
+}
+
+/* Nudge: the readout is a *result*, so separate it from the inputs above. */
+.score-readout {
+	border-top: 1px solid #e9ecef;
+	margin-top: 0.4rem;
+	padding-top: 0.35rem;
+}
+
+.score-marginals {
+	margin-top: 0.35rem;
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	line-height: 1.45;
+	color: #495057;
+}
+
+.score-marginals:empty { display: none; }
+
+.marg-row {
+	display: flex;
+	gap: 0.4rem;
+	white-space: nowrap;
+}
+
+.marg-var {
+	color: #6c757d;
+	min-width: 3.2rem;
+}
+
+.marg-vals { font-weight: 600; }
+
+/* ── Example picker ─────────────────────────────────────────────────────── */
+
+.example-panel {
+	position: fixed;
+	top: var(--gutter);
+	/* Centre on the canvas region, not the viewport. The inspector occupies the
+	   rightmost --inspector-width, so a plain left:50% put the optical centre
+	   140px too far right. */
+	left: calc((100% - var(--inspector-width)) / 2);
+	transform: translateX(-50%);
+	z-index: 10;
+	/* Cap the width so the centred panel's left edge clears the help panel.
+	   Solving  centre − W/2  ≥  gutter + help-width + gutter  gives
+	   W ≤ 100vw − inspector − 2·help − 4·gutter. Written out rather than
+	   collapsed to a constant so it stays correct if either width changes. */
+	width: min(30rem, calc(100vw - var(--inspector-width) - 2 * var(--help-width) - 4 * var(--gutter)));
+	min-width: 16rem;
+	background: rgba(255, 255, 255, 0.97);
+	border: 1px solid #dee2e6;
+	border-radius: 6px;
+	box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+	padding: 0.4rem 0.6rem 0.45rem;
+}
+
+.example-select {
+	width: 100%;
+	font-family: inherit;   /* <select> does not inherit font-family on its own */
+	font-size: 0.82rem;
+	font-weight: 600;
+	padding: 0.25rem 0.35rem;
+	border: 1px solid #ced4da;
+	border-radius: 4px;
+	background: #fff;
+	color: #212529;
+	cursor: pointer;
+}
+
+.example-select:focus {
+	outline: none;
+	border-color: #0d6efd;
+	box-shadow: 0 0 0 2px rgba(13,110,253,0.15);
+}
+
+.example-meta {
+	display: flex;
+	gap: 0.45rem;
+	align-items: baseline;
+	margin-top: 0.3rem;
+	font-size: 0.7rem;
+	line-height: 1.35;
+}
+
+.example-meta:empty { display: none; }
+
+.example-source {
+	color: #0d6efd;
+	font-family: var(--font-mono);   /* a page citation, e.g. p. 213 */
+	white-space: nowrap;
+	flex-shrink: 0;
+}
+
+.example-note {
+	color: #6c757d;
 }

@@ -406,10 +406,22 @@ function PDGView(hypergraph, mousept) {
 			[l.path2d, ln.true_mid] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true, (l.lw ?? 2)*1.5+6);
 		}
 
-		// clamp to within boundary
+		// Clamp to the canvas boundary — but ONLY when the canvas is actually big
+		// enough to hold the node. On a cold start the pane can still be sizing, so
+		// canvas.width reads 0 and the range INVERTS: lo = n.w/2 = 25, hi = -25.
+		// clamp() has no guard for lo > hi, so it returns -25 on the first tick and
+		// then 25 on the next, parking every node at exactly (w/2, h/2) — the whole
+		// graph collapses into the top-left corner as a single dot.
+		//
+		// This used to self-repair, because the running simulation re-ticked once the
+		// real size arrived. settle_pinned_layout() now stops the simulation outright,
+		// so nothing recomputes and the corruption is PERMANENT: startup rendered a
+		// blank canvas while the very same file loaded from the dropdown was fine.
+		// Skipping the clamp leaves the pinned coordinates untouched, and
+		// resizeCanvas() re-ticks when the real dimensions land.
 		nodes.concat(linknodes).forEach(function(n) {
-			n.x = clamp(n.x, n.w/2, canvas.width - n.w/2);
-			n.y = clamp(n.y, n.h/2, canvas.height - n.h/2);
+			if (canvas.width  > n.w) n.x = clamp(n.x, n.w/2, canvas.width  - n.w/2);
+			if (canvas.height > n.h) n.y = clamp(n.y, n.h/2, canvas.height - n.h/2);
 		});
 		
 		
@@ -437,21 +449,51 @@ function PDGView(hypergraph, mousept) {
 	// worst finite edge (`fair`, 0.326) is also the ramp max, so pinning ∞ to t=1
 	// rendered both edges the same red — erasing the asymmetry that IS the example.
 	// Hue plus dash pattern, so the distinction survives red/magenta colorblindness.
-	const INC_INF_COLOR = 'rgb(190,0,190)';
+	// Palette lives in viz.css (:root) so the legend, the canvas and the CSS-styled
+	// SVG cannot drift apart. Canvas needs real values, not var() references, so
+	// read the tokens once at startup.
+	const _tok = (name, fallback) => {
+		const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return v || fallback;
+	};
+	const PAL = {
+		green: _tok('--pdg-green', '#487050'),
+		grey:  _tok('--pdg-grey',  '#b8b8b8'),
+		red:   _tok('--pdg-red',   '#884838'),
+		ink:   _tok('--pdg-ink',   '#201820'),
+		inf:   _tok('--pdg-inf',   '#4a1f2e'),
+		select:      _tok('--pdg-select', '#5f5498'),
+		selectCasing:_tok('--pdg-select-casing', 'rgba(228,224,240,0.85)'),
+	};
+	const INC_INF_COLOR = PAL.inf;
+
+	function _hex2rgb(h) {
+		h = h.replace('#', '');
+		if (h.length === 3) h = h.split('').map(c => c + c).join('');
+		return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)];
+	}
+	function _mix(c0, c1, t) {
+		const a = _hex2rgb(c0), b = _hex2rgb(c1);
+		return `rgb(${a.map((v,i) => Math.round(v + (b[i]-v)*t)).join(',')})`;
+	}
 
 	function is_inf_score(l) {
 		return l && l.inc_score === Infinity;
 	}
 
+	// Figure 3.4's scale: grey = 0 (neutral), red = +1 (worse fit), green = -1
+	// (better fit). Edge scores are non-negative, so in practice this is the
+	// grey->red half; the green branch exists so a negative value would be shown
+	// honestly rather than clamped to grey.
 	function inc_color(l) {
 		if (l.inc_score == null || Number.isNaN(l.inc_score)) return null;
 		if (l.inc_score === Infinity) return INC_INF_COLOR;
 		if (_inc_max === 0) return null;
-		const t = Math.min(1, l.inc_score / _inc_max);
-		const r = Math.round(220 * t + 60 * (1 - t));
-		const g = Math.round(30 * t + 120 * (1 - t));
-		const b = Math.round(30 * t + 200 * (1 - t));
-		return `rgb(${r},${g},${b})`;
+		if (l.inc_score < 0) {
+			const t = Math.min(1, -l.inc_score / _inc_max);
+			return _mix(PAL.grey, PAL.green, t);
+		}
+		return _mix(PAL.grey, PAL.red, Math.min(1, l.inc_score / _inc_max));
 	}
 
 	// Mirrors server.py's _as_weight: α/β may arrive as the strings "inf" / "∞",
@@ -506,13 +548,15 @@ function PDGView(hypergraph, mousept) {
 			context.lineWidth = lw * 1.2 + 3;
 			// Casing stays opaque even when the arc itself is faded: it is there for
 			// legibility against whatever the arc crosses, not to carry data.
-			context.strokeStyle = l.selected ? "rgba(230, 150, 50, 0.4)" : "rgba(255, 255, 255, 0.7)";
+			context.strokeStyle = l.selected ? PAL.selectCasing : "rgba(255, 255, 255, 0.7)";
 			context.stroke(l.path2d);
 
 			context.globalAlpha = alpha_opacity(l);
 			context.lineWidth =  lw;
 			const col = inc_color(l);
-			context.strokeStyle = l.selected ? "#863" : (col || "black");
+			// Selection is violet, deliberately outside the grey->red->green semantic
+			// ramp: a selected arc must never be mistakeable for a scored one.
+			context.strokeStyle = l.selected ? PAL.select : (col || PAL.ink);
 			// Dash infinitely-inconsistent edges: a second, redundant cue so the
 			// "this cpd assigns probability 0 to something you believe" case is
 			// legible without relying on hue alone.

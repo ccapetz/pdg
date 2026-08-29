@@ -21,14 +21,41 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# NB: this extra is for distviz.py's matplotlib plotting, NOT for the web tool
+# in viz/. The names collide confusingly; `web` below is the one that serves
+# interface.htm.
 viz = [
   "matplotlib>=3.5",
   "seaborn>=0.11",
   "scikit-learn>=1.0"
 ]
+# viz/server.py imports these at module scope, as does viz/check_examples.py
+# (via `from server import ...`). Undeclared, a fresh clone died with
+# ModuleNotFoundError and the only way to find the fix was reading the imports.
+web = [
+  "fastapi>=0.100",
+  "uvicorn>=0.23"
+]
 cvx = [
   "cvxpy>=1.1"
 ]
+
+[tool.uv]
+# `requires-python = ">=3.9"` is upstream's claim about the *library*, and stays
+# true. But torch dropped 3.9 after 2.8, so resolving across that whole range
+# pinned torch to 2.8.0 — three minor versions below the 2.11.0 every number in
+# dissertation/ and check_examples.py was verified against. Optimizer behaviour is
+# exactly the kind of thing that drifts across torch releases, so a silent
+# downgrade here would quietly invalidate the examples.
+#
+# Constrain the resolution environment rather than narrowing requires-python:
+# the tool wants 3.12 (see .python-version), the library still supports 3.9.
+#
+# The constraint does not pin 2.11.0; it frees the resolver to move *forward*, to
+# 2.13.0. That is still drift, so it was checked rather than assumed:
+# check_examples.py output is byte-identical under 2.11.0 and 2.13.0 — all nine
+# assertions, every digit. That is what makes committing uv.lock safe.
+environments = ["python_full_version >= '3.12'"]
 
 [tool.setuptools]
 packages = ["pdg", "pdg.alg", "pdg.gen", "pdg.lib", "pdg.sim", "pdg.util"]

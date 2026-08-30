@@ -62,8 +62,29 @@ function PDGView(hypergraph, mousept) {
 	// otherwise scramble a hand-placed layout. See the note there.
 	let has_pinned_layout = false
 	// 
+	// One shared marker serves every arc: `context-stroke` makes the head take the
+	// path's own stroke colour, so the score ramp does not need a marker per hue.
+	// markerUnits defaults to strokeWidth, so heads scale with beta automatically.
+	let _svgroot = d3.select("#svg");
+	if (_svgroot.select("defs#pdg-defs").empty()) {
+		_svgroot.append("defs").attr("id", "pdg-defs").html(`
+			<marker id="pdg-arrow" viewBox="0 0 10 10" refX="9.2" refY="5"
+			        markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+				<path d="M 1,1.6 L 9,5 L 1,8.4" fill="none" stroke="context-stroke"
+				      stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+			</marker>`);
+	}
+
 	svgg = d3.select("#svg").append("g")
 		.classed("PDG", true)
+
+	// Arcs live in their own group, appended FIRST so every node group added later
+	// paints over them. Node boxes are opaque, so arcs must pass behind them.
+	let arcg = svgg.append("g").classed("arc-layer", true);
+	// Casings all paint before strokes, so a wide halo never covers the arc it is
+	// meant to back. Two groups is the cheapest way to guarantee that ordering.
+	let casingg = arcg.append("g").classed("arc-casings", true);
+	let strokeg = arcg.append("g").classed("arc-strokes", true);
 	
 	if(hypergraph !== undefined) {
 		load(hypergraph)
@@ -317,79 +338,44 @@ function PDGView(hypergraph, mousept) {
 		// 			/ tgt.length
 		// );
 		
-		let lpath = new Path2D();
+		// Geometry is emitted as SVG path data, and the Path2D is built FROM that
+		// string, so the picture and the hit-test cannot drift apart. Arcs are
+		// painted as SVG now (restyle_arcs); the Path2D survives only because
+		// context.isPointInStroke remains the cheapest way to pick a curve, and it
+		// works fine on a context nothing was ever drawn to.
+		//
+		// Arrowheads are no longer baked into the geometry. They were two quadratics
+		// aimed by hand at a point 80% along the control polygon, which is an
+		// approximation of the tangent; a <marker> orients itself to the real one.
+		const _n = v => Number(v).toFixed(2);
+		let segs = { src: [], tgt: [] };
 		src.forEach( function(s) {
-			// lpath.moveTo(...shortener(s));
-			// lpath.moveTo(lookup[s].x, lookup[s].y);
 			startpt = shortener(s);
-			lpath.moveTo(...startpt);
-			// lpath.quadraticCurveTo(avgsrcshortened[0], avgsrcshortened[1], mid[0], mid[1]);
-			// lpath.bezierCurveTo(
-			// 		// avgtgt[0], avgtgt[1],
-			// 		0.2*midearly[0] + startpt[0]*(0.8),
-			// 		0.2*midearly[1] + startpt[1]*(0.8),
-			// 		.8*avgsrcshortened[0] + mid[0]*(0.2),
-			// 		.8*avgsrcshortened[1] + mid[1]*(0.2),
-			// 		// lookup[s].x, lookup[s].y,
-			// 		mid[0], mid[1]);
-			// lpath.bezierCurveTo(
-			// 		// avgtgt[0], avgtgt[1],
-			// 		0.2*midearly[0] + startpt[0]*(0.8) + delta[0] * 0.9,
-			// 		0.2*midearly[1] + startpt[1]*(0.8) + delta[1] * 0.9,
-			// 		.8*avgsrcshortened[0] + true_mid[0]*(0.2) + delta[0] * 1.8,
-			// 		.8*avgsrcshortened[1] + true_mid[1]*(0.2) + delta[1] * 1.8,
-			// 		// lookup[s].x, lookup[s].y,
-			// 		mid[0], mid[1]);
-			
-			
-			lpath.bezierCurveTo(
-					// avgtgt[0], avgtgt[1],
-					// 0.2*midearly[0] + startpt[0]*(0.8) + delta[0] * 0,
-					// 0.2*midearly[1] + startpt[1]*(0.8) + delta[1] * 0,
-					 0.2*mid[0] + startpt[0]*(0.8) + delta[0] * 0,
-					 0.2*mid[1] + startpt[1]*(0.8) + delta[1] * 0,
-					.8*avgsrcshortened[0] + true_mid[0]*(0.2) + delta[0],
-					.8*avgsrcshortened[1] + true_mid[1]*(0.2) + delta[1],
-					// lookup[s].x, lookup[s].y,
-					mid[0], mid[1]);
-
-			// lpath.moveTo(...startpt);
-			// lpath.lineTo(mid[0], mid[1]);
+			segs.src.push(
+				`M ${_n(startpt[0])},${_n(startpt[1])} C ` +
+				`${_n(0.2*mid[0] + startpt[0]*0.8)},${_n(0.2*mid[1] + startpt[1]*0.8)} ` +
+				`${_n(.8*avgsrcshortened[0] + true_mid[0]*0.2 + delta[0])},` +
+				`${_n(.8*avgsrcshortened[1] + true_mid[1]*0.2 + delta[1])} ` +
+				`${_n(mid[0])},${_n(mid[1])}`);
 		});
 		tgt.forEach( function(t) {
-			// lpath.moveTo( true_mid[0], true_mid[1] );
-			lpath.moveTo(...mid);
-			// lpath.quadraticCurveTo(avgtgt[0], avgtgt[1], lookup[t].x, lookup[t].y);
 			let endpt = shortener(t);
-			// console.log(mid, vec2(lookup[t]), endpt);
-			// scale(delta, Math.max(0, norm-35) / norm )
-
-			// lpath.quadraticCurveTo(avgtgtshortened[0], avgtgtshortened[1], endpt[0], endpt[1]);
-			// lpath.lineTo(...endpt);
 			central_ctrl = [
 					.8*avgtgtshortened[0] + true_mid[0]*(0.2) + delta[0],
 					.8*avgtgtshortened[1] + true_mid[1]*(0.2) + delta[1],
 				];
 			proximal_ctrl =  [
-					0.2*mid[0] + endpt[0]*(0.8) + delta[0] * 0,
-					0.2*mid[1] + endpt[1]*(0.8) + delta[1] * 0 
+					0.2*mid[0] + endpt[0]*(0.8),
+					0.2*mid[1] + endpt[1]*(0.8)
 				];
-			lpath.bezierCurveTo(...central_ctrl, ...proximal_ctrl, ...endpt);
-					// lookup[s].x, lookup[s].y,
-					// endpt[0], endpt[1]);
-			
-			
-			
-			// ### DRAW ARROWS
-			// let [ar0, ar1, armid0, armid1] = arrowpts(mid, endpt, arrwidth);
-			// let [ar0, ar1, armid0, armid1] = arrowpts(central_ctrl, endpt, arrwidth);
-			let [ar0, ar1, armid0, armid1] = arrowpts(meldv(central_ctrl,proximal_ctrl,0.8), endpt, arrwidth);
-			lpath.moveTo(...endpt);
-			lpath.quadraticCurveTo(armid0[0], armid0[1], ar0[0], ar0[1]);
-			lpath.moveTo(...endpt);
-			lpath.quadraticCurveTo(armid1[0], armid1[1], ar1[0], ar1[1]);
+			segs.tgt.push(
+				`M ${_n(mid[0])},${_n(mid[1])} C ` +
+				`${_n(central_ctrl[0])},${_n(central_ctrl[1])} ` +
+				`${_n(proximal_ctrl[0])},${_n(proximal_ctrl[1])} ` +
+				`${_n(endpt[0])},${_n(endpt[1])}`);
 		});
-		if(return_mid) return [lpath, true_mid];
+		let lpath = new Path2D(segs.src.concat(segs.tgt).join(" "));
+		if(return_mid) return [lpath, true_mid, segs];
 		return lpath;
 	}
 
@@ -403,7 +389,7 @@ function PDGView(hypergraph, mousept) {
 			// happens to yield 2 for undefined but silently corrupts real widths —
 			// the hover highlight sets l.lw = 5 (pdgviz.js:884) and 5|2 renders as 7.
 			// Harmless while nothing multiplied it; beta_scale now does.
-			[l.path2d, ln.true_mid] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true, (l.lw ?? 2)*1.5+6);
+			[l.path2d, ln.true_mid, l.segs] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true, (l.lw ?? 2)*1.5+6);
 		}
 
 		// Clamp to the canvas boundary — but ONLY when the canvas is actually big
@@ -448,7 +434,7 @@ function PDGView(hypergraph, mousept) {
 	// so it gets its own channel rather than the top of the ramp. In Ex 2.1 the
 	// worst finite edge (`fair`, 0.326) is also the ramp max, so pinning ∞ to t=1
 	// rendered both edges the same red — erasing the asymmetry that IS the example.
-	// Hue plus dash pattern, so the distinction survives red/magenta colorblindness.
+	// Hue plus dash pattern, so the distinction survives colour-vision deficiency.
 	// Palette lives in viz.css (:root) so the legend, the canvas and the CSS-styled
 	// SVG cannot drift apart. Canvas needs real values, not var() references, so
 	// read the tokens once at startup.
@@ -540,63 +526,11 @@ function PDGView(hypergraph, mousept) {
 		context.save();
 		try {
 		context.globalAlpha = 1;
-		for( let l of links) {
-			// let lw = l.hasAttribute('lw')? l.lw : 2;
-			if(!l.display) continue;
-			let lw = (l.lw ?? 2) * beta_scale(l);
-			context.globalAlpha = 1;
-			context.lineWidth = lw * 1.2 + 3;
-			// Casing stays opaque even when the arc itself is faded: it is there for
-			// legibility against whatever the arc crosses, not to carry data.
-			context.strokeStyle = l.selected ? PAL.selectCasing : "rgba(255, 255, 255, 0.7)";
-			context.stroke(l.path2d);
-
-			context.globalAlpha = alpha_opacity(l);
-			context.lineWidth =  lw;
-			const col = inc_color(l);
-			// Selection is violet, deliberately outside the grey->red->green semantic
-			// ramp: a selected arc must never be mistakeable for a scored one.
-			context.strokeStyle = l.selected ? PAL.select : (col || PAL.ink);
-			// Dash infinitely-inconsistent edges: a second, redundant cue so the
-			// "this cpd assigns probability 0 to something you believe" case is
-			// legible without relying on hue alone.
-			const dashed = is_inf_score(l) && !l.selected;
-			if (dashed) context.setLineDash([Math.max(4, lw * 2), Math.max(3, lw)]);
-			context.stroke(l.path2d);
-			if (dashed) context.setLineDash([]);
-			context.globalAlpha = 1;
-			// context.lineWidth = 1;
-			// context.setLineDash([4,1]);
-			// context.strokeStyle = 'red';
-			// context.beginPath();
-			// // context.moveTo(srcnode.x, srcnode.y);
-			// // context.lineTo(tgtnode.x, tgtnode.y);
-			// context.moveTo(...avgsrcshortened);
-			// context.lineTo(...avgtgtshortened);
-			// context.stroke();
-		}
-		
-		
-		
-		//DEBUG: Draw ex and ey of nodes
-		// context.globalAlpha = 0.7;
-		// for (let n of nodes) {
-		// 	if(n.ex && n.ey) {
-		// 		context.fillStyle="#A4C";
-		// 		context.beginPath();
-		// 		context.arc(n.ex, n.ey, 10, 0, 2 * Math.PI);
-		// 		context.fill();
-		// 	}
-		// 	if(n.ex2 && n.ey2) {
-		// 		context.fillStyle="#CA4";
-		// 		context.beginPath();
-		// 		context.arc(n.ex2, n.ey2, 10, 0, 2 * Math.PI);
-		// 		context.fill();
-		// 	}
-		// }
-		
-		/// Draw the invisible product nodes + make sure no node goes off screen.
-		context.globalAlpha = 0.5;
+		// Arcs are painted by restyle_arcs() as SVG. Nothing about them is drawn to
+		// the canvas any more; the canvas keeps only the transient overlays that
+		// pdgviz.js owns (box-select rectangle, the temp_link rubber band) and the
+		// collapsed-node dots below.
+context.globalAlpha = 0.5;
 		context.lineWidth = 2;
 		nodes.forEach(function(n) {
 			if(! n.display ) {
@@ -656,7 +590,7 @@ function PDGView(hypergraph, mousept) {
 		for (let ln of linknodes) {
 			let l = ln.link;
 			if(l.srcs.length ==0) continue;
-			[l.path2d, ln.true_mid] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true);
+			[l.path2d, ln.true_mid, l.segs] = compute_link_shape(l.srcs, l.tgts, vec2(ln), true);
 			// ln.x += (mid[0] - ln.x) * 0.25;
 			// ln.y += (mid[1] - ln.y) * 0.25;
 			// ln.vx += (ln.true_mid[0] + ln.offset[0] - ln.x - ln.vx) * strength * alpha; 
@@ -858,7 +792,54 @@ function PDGView(hypergraph, mousept) {
 		// }
 		update_simulation();
 	}
+	// Arcs as SVG. What this buys over stroking to canvas:
+	//   - arrowheads are <marker>s, oriented to the true path tangent instead of
+	//     two quadratics aimed at a point 80% along the control polygon;
+	//   - state is declarative. The continuous score colour has to be a value, so
+	//     it rides on a custom property, but the CATEGORICAL states — selected,
+	//     infinite — are classes, and viz.css decides what they look like. draw()
+	//     no longer branches on them.
+	// Hit-testing still uses the Path2D: isPointInStroke needs no painted canvas,
+	// and both come from the same emitted path data.
+	function restyle_arcs() {
+		const recs = [];
+		for (const l of links) {
+			if (!l.display || !l.segs) continue;
+			const shared = {
+				l,
+				col: l.selected ? PAL.select : (inc_color(l) || PAL.ink),
+				lw:  (l.lw ?? 2) * beta_scale(l),
+				op:  alpha_opacity(l),
+				inf: is_inf_score(l) && !l.selected,
+				sel: !!l.selected,
+			};
+			l.segs.src.forEach((d, i) => recs.push({ ...shared, d, arrow: false, key: l.label + "|s" + i }));
+			l.segs.tgt.forEach((d, i) => recs.push({ ...shared, d, arrow: true,  key: l.label + "|t" + i }));
+		}
+
+		let cas = casingg.selectAll("path").data(recs, r => r.key);
+		cas.exit().remove();
+		cas.enter().append("path").classed("arc-casing", true)
+			.merge(cas)
+			.attr("d", r => r.d)
+			.style("stroke-width", r => (r.lw * 1.2 + 3) + "px")
+			.classed("selected", r => r.sel);
+
+		let str = strokeg.selectAll("path").data(recs, r => r.key);
+		str.exit().remove();
+		str.enter().append("path").classed("arc-stroke", true)
+			.merge(str)
+			.attr("d", r => r.d)
+			.attr("marker-end", r => r.arrow ? "url(#pdg-arrow)" : null)
+			.style("stroke", r => r.col)
+			.style("stroke-width", r => r.lw + "px")
+			.style("opacity", r => r.op)
+			.classed("infinite", r => r.inf)
+			.classed("selected", r => r.sel);
+	}
+
 	function restyle_links() {
+		restyle_arcs();
 		let lndata = svgg.selectAll(".linknode").data(linknodes, ln => ln.link.label);
 		
 		let newlnGs = lndata.enter().append("g").classed("linknode", true);

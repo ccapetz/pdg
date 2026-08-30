@@ -54,7 +54,7 @@
     "title": "Two coins",
     "source": "Ex 2.1, p. 49",
     "tier": "Tier 1",
-    "note": "The smallest genuinely inconsistent PDG, and inconsistency here is ASYMMETRIC: `dbl` puts 0 on T, so mass on T is infinitely surprising to it — but not conversely. Optimize → Inc = ∞ (magenta dashed edge). Set ε = 1e-3 to recover the true minimum, ln 2 ≈ 0.693.",
+    "note": "The smallest genuinely inconsistent PDG, and inconsistency here is ASYMMETRIC: `dbl` puts 0 on T, so mass on T is infinitely surprising to it — but not conversely. Optimize → Inc = ∞ (dashed edge, off the end of the colour scale). Set ε = 1e-3 to recover the true minimum, ln 2 ≈ 0.693.",
     "gamma": 1.0,
     "epsilon": 0.0,
     "iters": 2000

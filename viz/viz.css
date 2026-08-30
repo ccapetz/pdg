@@ -283,6 +283,32 @@
 	font-weight: bold;
 }
 
+/* ── Arcs (SVG) ─────────────────────────────────────────────────────────────
+   Arcs moved off the canvas so their state could be declarative. The score
+   colour is continuous, so it still arrives as a value (inline `stroke`); the
+   categorical states are classes, and what they LOOK like is decided here
+   rather than inside a draw loop.
+
+   `fill: none` is load-bearing: an SVG path fills black by default, so without
+   it every curve renders as a filled blob. */
+.arc-layer path {
+	fill: none;
+	stroke-linecap: round;
+	stroke-linejoin: round;
+}
+
+/* Casing is legibility, not data: an opaque halo so an arc stays readable
+   wherever it crosses another. It keeps full opacity even when the arc itself
+   is faded by a low alpha. */
+.arc-casing { stroke: rgba(255, 255, 255, 0.7); }
+.arc-casing.selected { stroke: var(--pdg-select-casing); }
+
+/* Infinite inconsistency: "this cpd assigns probability 0 to something you
+   believe". Dashing is a redundant cue alongside --pdg-inf, so the case does
+   not rely on hue alone. Fixed pattern rather than one scaled to beta — it is a
+   categorical flag, and a constant reads more consistently across widths. */
+.arc-stroke.infinite { stroke-dasharray: 7 4.5; }
+
 .linknode .linknode-label {
 	/* Arc labels are cpd names (p, q, s1) — also mathematical objects. */
 	font-family: var(--font-math);

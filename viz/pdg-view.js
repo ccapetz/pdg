@@ -405,10 +405,24 @@ function PDGView(hypergraph, mousept) {
 		// blank canvas while the very same file loaded from the dropdown was fine.
 		// Skipping the clamp leaves the pinned coordinates untouched, and
 		// resizeCanvas() re-ticks when the real dimensions land.
-		nodes.concat(linknodes).forEach(function(n) {
-			if (canvas.width  > n.w) n.x = clamp(n.x, n.w/2, canvas.width  - n.w/2);
-			if (canvas.height > n.h) n.y = clamp(n.y, n.h/2, canvas.height - n.h/2);
-		});
+		// ...and only for FORCE-DRIVEN layouts. The clamp writes back to n.x/n.y, so
+		// it is destructive: on a file that shipped its own coordinates, a narrow
+		// window permanently squashes the figure, and widening it again does NOT
+		// restore anything, because settle_pinned_layout() stopped the simulation and
+		// nothing recomputes. Observed: SH pinned at x=570 became 509 in a narrow pane
+		// and stayed there until reload.
+		//
+		// Authored coordinates are data, not a suggestion — clipping them is
+		// recoverable (widen the window), squashing them is not, and the C7 pair only
+		// stays comparable while both files render at the coordinates they carry.
+		// Keeping nodes on screen is a service to a simulation that is still moving
+		// them, which is exactly the case this now covers.
+		if (!has_pinned_layout) {
+			nodes.concat(linknodes).forEach(function(n) {
+				if (canvas.width  > n.w) n.x = clamp(n.x, n.w/2, canvas.width  - n.w/2);
+				if (canvas.height > n.h) n.y = clamp(n.y, n.h/2, canvas.height - n.h/2);
+			});
+		}
 		
 		
 		restyle_nodes();

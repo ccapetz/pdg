@@ -22,7 +22,12 @@ except ImportError:
     _cvxpy_available = False
 
 VIZ_DIR = os.path.dirname(os.path.abspath(__file__))
-PORT = 8080
+# 8080 by default — that is the port the readme, CLAUDE.md and the Makefile all
+# name. Honour $PORT when it is set so a harness that assigns its own port (or a
+# second instance alongside one already holding 8080) can start without editing
+# code. Nothing here is pinned to a specific port: the page fetches relative
+# URLs and there are no OAuth callbacks, webhooks or CORS origins to match.
+PORT = int(os.environ.get("PORT", 8080))
 
 _executor = ThreadPoolExecutor(max_workers=2)
 

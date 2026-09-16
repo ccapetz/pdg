@@ -58,21 +58,56 @@ The tool opens on a worked example. The loop is:
    example shows what it is meant to show.
 2. **Click an arc** to open the inspector: sources, targets, an editable CPD table with
    row-sum validation, and the arc's two confidences — **α** (in the functional
-   dependence) and **β** (in the CPD itself).
-3. **Score** computes inconsistency in closed form. You get `Inc`, `IDef`, per-variable
-   marginals, and each arc recoloured blue→red by how much *it* contributes. Arcs with
-   infinite inconsistency go magenta and dashed.
+   dependence) and **β** (in the CPD itself). **Click a variable** instead and you get
+   its values plus the arcs into and out of it, each one a shortcut to the full arc view.
+3. **Score** computes inconsistency in closed form: `Inc`, `IDef`, and each arc recoloured
+   grey→red by how much *it* contributes. An arc whose CPD rules out something believed
+   has infinite inconsistency, and is drawn in a deeper red **and dashed**, because that
+   is a different kind of thing from a large number.
 4. **Optimize** runs a gradient minimizer to find the beliefs that best reconcile the
    model (~0.4 s).
 5. **Drag γ** to trade off structural against observational fit; the last action re-runs
    automatically.
+6. **Read the distribution** in the drawer along the bottom — see below.
 
 α and β are also drawn, not just editable: **β sets arc thickness, α sets opacity**, so a
 *proper* PDG (β ≫ α) looks like what it is — thick, faint arcs.
 
-You can also author from scratch: right-click for a node, `d` for draw mode, `t` to pull an
-arc from a selection, `x` to delete. `Save`/`Load` round-trip JSON. Press **Help** (top
-left) for the full key map.
+### Authoring
+
+You can build a model from nothing:
+
+- **`d`** enters draw mode, where a drag makes an arc and a click makes a node.
+  **`m`** returns to manipulate mode, where double-clicking empty canvas makes a node and
+  asks for its name. `t` pulls an arc from the current selection, `g` grabs, `x` deletes.
+- **A new arc arrives with an empty CPD of the right shape**, rows and columns already
+  labelled by the variables' values, so it is immediately editable. Unfinished rows are
+  flagged red, and an **Autofill** button samples Dirichlet(1) — uniform over the simplex
+  — into whatever is still blank, leaving numbers you typed alone.
+- **Variable domains are editable** in the variable inspector, one field per value.
+  Renaming a value rewrites it in every CPD that mentions it; adding or removing one
+  reshapes those CPDs, keeping every cell that still has a home and blanking the rest.
+- **Click the inspector's title** to rename a variable or an arc.
+- A **warning banner** appears bottom left whenever something is unfinished. It is a
+  button: each click steps to the next offender and opens it.
+
+`Save`/`Load` round-trip JSON. Press **Help** (top left) for the full key map.
+
+### The distribution drawer *(new, work in progress)*
+
+Score or Optimize opens a drawer along the bottom with three views of the joint
+distribution the solver produced:
+
+- **Marginals**, one chip per value. **Click a value to condition on it** and the column
+  re-reads as `P( · | PS = ps )`.
+- **The most likely worlds**, as sorted bars. Always the top 20, with a line for what is
+  left over, so the chart stays the same size however large the model gets.
+- **Pairwise mutual information**, in bits — what the joint knows that the marginals throw
+  away. Sized by the number of variables rather than by the product of their domains.
+
+The joint itself is never sent to the browser; these are derived from it in `server.py`.
+Conditioning currently re-reads the marginals column only — the other two still describe
+the unconditioned joint.
 
 ### The examples
 
@@ -84,8 +119,11 @@ left) for the full key map.
 | Grok (parallel arcs) | Ex 3.4 | Two arcs that disagree *slightly*: `Inc = 0.155`, finite. Not all inconsistencies are equally bad. |
 | Factor graph: drift vs merged | Ex 3.6 | Identical except for α. Optimize gives **0.842 vs 0.700**. The difference between these two files is the entire argument. |
 | Modeled bias | Ex 4.1 | Modelling the coin's bias explicitly → **2/3 at γ=0, 3/4 at γ=1**. |
+| Tanning bed | Ex 3.2 | The smoking BN plus a second cause of cancer. A BN would have to rewrite `p4` over `{S, SH, T}`; the PDG just gains an arc — and `Inc` leaves zero. |
 
-`make check` verifies every one of them against the number the dissertation predicts.
+`make check` verifies the dissertation examples against the numbers the text predicts.
+(The tanning bed's CPDs are ours — Ex 3.2 gives the structure and the argument, not a
+table — so it is not among the pinned checks.)
 
 ---
 
@@ -100,13 +138,14 @@ viz/                                                the editor (this fork)
   pdg-view.js       view model, rendering, force simulation
   pdgviz.js         canvas, input handling, inspector, controls
   examples/         model JSON + catalog.json (generated — edit the generator)
-dissertation/                                       structured reference notes
+  gen_catalog_examples.py   writes examples/ and catalog.json
+  check_examples.py         verifies them against the dissertation
 ```
 
 **The Python library is deliberately untouched.** It is the only part whose correctness
 can't be checked by looking at it: if `Inc` is subtly wrong, every conclusion downstream is
 silently poisoned. Where the backbone misbehaves, `viz/server.py` routes around it and the
-bug is documented rather than patched. See `CLAUDE.md` for the specifics.
+bug is documented at the call site rather than patched.
 
 ### Known limitations
 
@@ -116,8 +155,14 @@ bug is documented rather than patched. See `CLAUDE.md` for the specifics.
 - **The optimizer diverges on exact zeros in a CPD.** The ε selector smooths them as a
   workaround. It is a bug workaround, not a modelling knob — which is why it is a discrete
   selector rather than a slider.
-- Multi-target hyperarcs and explicit variable domains are not yet in the JSON schema;
-  domains are inferred from CPD keys.
+- Multi-target hyperarcs are not in the JSON schema, and variable domains have no field of
+  their own — they are inferred from CPD keys, which means a variable with no arcs has no
+  domain to save.
+- **The distribution drawer is new and unfinished.** Conditioning affects the marginals
+  column only; the worlds chart and the mutual-information matrix still describe the
+  unconditioned joint.
+- An arc whose CPD is unfinished is left out of Score and Optimize — the panel names which
+  ones — rather than being guessed at.
 
 ---
 

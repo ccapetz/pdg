@@ -5,31 +5,107 @@
 	/* background-color: #A3A; */
 }
 
+/* ── Toolbar ─────────────────────────────────────────────────────────────
+   Bottom-LEFT. The right rail is spoken for twice over — the inspector column
+   plus the score panel stacked against it — and putting the modes and the file
+   actions there as well made that corner the only busy region on screen.
+
+   Styled as one panel in the same idiom as .help-panel and .example-panel
+   (0.97 white, #dee2e6 hairline, 6px radius, soft shadow, 0.78rem UI font)
+   rather than as Bootstrap's five outline colours. Those colours were doing no
+   work: primary/info/success/dark distinguished the groups from each other,
+   which the dividers already do, while competing with a canvas where colour
+   MEANS inconsistency. */
 .toolbar {
-	/* fixed rather than absolute purely for consistency with the other floating
-	   panels; body is 100%/100% with no transformed ancestor, so this resolves to
-	   the same box either way. */
 	position: fixed;
 	bottom: var(--gutter);
-	right: var(--rail-right);
+	left: var(--gutter);
 	z-index: 10;
+	display: flex;
+	align-items: stretch;
+	gap: 0.4rem;
+	padding: 0.3rem;
+	/* Wraps rather than running off the left rail on a narrow window; the panel is
+	   426px wide, so anything under ~460px would otherwise clip a group. */
+	flex-wrap: wrap;
+	max-width: calc(100vw - 2 * var(--gutter));
+	background: rgba(255, 255, 255, 0.97);
+	border: 1px solid #dee2e6;
+	border-radius: 6px;
+	box-shadow: 0 2px 10px rgba(0,0,0,0.1);
 }
 
-
-.btn {
-	/* background-color: blue; */
-	/* padding:7px; */
+/* Segmented: buttons in a group touch, so the group reads as one control. */
+.tool-group {
+	display: flex;
 }
-.btn.active{
-	background-color: #005;
-	 color: white; 
-	font-weight: bold;
+
+.tool-sep {
+	width: 1px;
+	background: #e9ecef;
+	margin: 0.15rem 0;
+}
+
+.tool-btn {
+	font-family: inherit;   /* <button> does not inherit font-family on its own */
+	font-size: 0.78rem;
+	font-weight: 500;
+	line-height: 1;
+	padding: 0.38rem 0.7rem;
+	color: #495057;
+	background: #fff;
+	border: 1px solid #ced4da;
+	cursor: pointer;
+	white-space: nowrap;
+	/* Colour and background only: these sit over a canvas that repaints on every
+	   simulation tick, so nothing here should be able to trigger layout. */
+	transition: background-color 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.tool-group .tool-btn + .tool-btn { margin-left: -1px; }
+.tool-group .tool-btn:first-child { border-radius: 4px 0 0 4px; }
+.tool-group .tool-btn:last-child  { border-radius: 0 4px 4px 0; }
+.tool-group .tool-btn:only-child  { border-radius: 4px; }
+
+.tool-btn:hover:not(:disabled) {
+	background: #f1f3f5;
+	color: #212529;
+	z-index: 1;   /* so the hovered border wins over the -1px overlap */
+}
+
+.tool-btn:focus-visible {
+	outline: none;
+	border-color: var(--pdg-select);
+	box-shadow: 0 0 0 2px rgba(95, 84, 152, 0.25);
+	z-index: 1;
+}
+
+.tool-btn:active:not(:disabled) { background: #e9ecef; }
+
+/* The active mode is a UI state, so it takes the violet that already means
+   "UI state, not a score" (see --pdg-select). Anything on the grey→red ramp
+   would read as an inconsistency value. */
+.tool-btn.active {
+	background: var(--pdg-select);
+	border-color: var(--pdg-select);
+	color: #fff;
+	font-weight: 600;
+	z-index: 1;
+}
+.tool-btn.active:hover { background: #6d61ab; }
+
+/* Score/Optimize disable themselves and swap in "Scoring…" while in flight. */
+.tool-btn:disabled {
+	color: #adb5bd;
+	background: #f8f9fa;
+	cursor: progress;
 }
 
 :root {
 	/* The inspector is a permanent column, not an overlay: #inspector is never
-	   hidden (showEdgeInspector only swaps .inspector-empty for
-	   .inspector-content), so this width is always spoken for. Anything pinned to
+	   hidden (showEdgeInspector / showNodeInspector only swap between
+	   .inspector-empty, .inspector-content and .inspector-node), so this width is
+	   always spoken for. Anything pinned to
 	   the right edge must offset by it rather than by a bare gutter, or it lands
 	   on top — which is exactly what the toolbar and score panel used to do,
 	   winning on z-index (10 vs 5) and covering the CPD table. */
@@ -124,6 +200,86 @@
 }
 .inspector-empty { flex: 1 1 auto; }
 .inspector-content { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+.inspector-node { flex: 1 1 auto; overflow-y: auto; min-height: 0; }
+
+/* ── Node view ───────────────────────────────────────────────────────────
+   An arc row is a shortcut into the edge view, so it is a button, not a label.
+   Kept deliberately quieter than the CPD table it links to: label, endpoints,
+   and the two numbers (β, and the arc's inconsistency once you have scored). */
+.node-name {
+	font-style: italic;   /* a variable name — same treatment as on the canvas */
+}
+
+.node-values { color: #495057; }
+.node-values .node-values-unknown {
+	font-family: var(--font-ui);
+	font-style: italic;
+	font-weight: 400;
+	color: #adb5bd;
+}
+
+.node-count {
+	font-family: var(--font-mono);
+	font-size: 0.7rem;
+	color: #adb5bd;
+}
+
+.node-arcs { display: flex; flex-direction: column; gap: 0.25rem; }
+
+.node-arcs-empty {
+	color: #adb5bd;
+	font-style: italic;
+	font-size: 0.75rem;
+}
+
+.arc-chip {
+	display: flex;
+	align-items: baseline;
+	gap: 0.4rem;
+	width: 100%;
+	text-align: left;
+	font-family: inherit;
+	font-size: 0.75rem;
+	padding: 0.3rem 0.4rem;
+	background: #fff;
+	border: 1px solid #e9ecef;
+	border-left: 3px solid var(--chip-accent, #dee2e6);
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background-color 0.12s, border-color 0.12s;
+}
+.arc-chip:hover { background: #f8f9fa; border-color: #ced4da; }
+.arc-chip:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(95, 84, 152, 0.25);
+}
+/* Mirrors the canvas: an arc already selected there is the one you are looking at. */
+.arc-chip.selected {
+	background: var(--pdg-lavender);
+	border-color: var(--pdg-lavender-edge);
+}
+
+.arc-chip-label {
+	font-family: var(--font-math);
+	font-style: italic;
+	flex: 0 0 auto;
+}
+.arc-chip-ends {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	color: #868e96;
+	flex: 1 1 auto;
+	overflow: hidden;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+.arc-chip-score {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	color: #495057;
+	flex: 0 0 auto;
+}
+
 
 /* ── Legend ─────────────────────────────────────────────────────────────── */
 .inspector-legend {
@@ -208,6 +364,48 @@
 	font-family: var(--font-math);   /* an arc label is a mathematical object */
 	font-size: 1rem;
 }
+
+/* ── Click-to-edit title ─────────────────────────────────────────────────
+   The inspector's title doubles as the rename affordance for both a node's name
+   and an arc's label. Quiet until hovered — it is a title first, a control
+   second — and the hover state has to be a background rather than an outline, so
+   nothing shifts when the <input> takes its place. */
+.renameable {
+	cursor: text;
+	border-radius: 3px;
+	padding: 0 0.2rem;
+	margin: 0 -0.2rem;
+	transition: background-color 0.12s;
+}
+.renameable:hover { background: #eceef0; }
+/* The header is a flex row (title | close button); without this the input cannot
+   shrink below its intrinsic width and pushes the close button out. */
+.inspector-header .renameable { flex: 1 1 auto; min-width: 0; }
+
+.rename-input {
+	width: 100%;
+	font-family: var(--font-math);   /* matches the name it replaces */
+	font-size: 1rem;
+	padding: 0 0.15rem;
+	border: 1px solid var(--pdg-select);
+	border-radius: 3px;
+	background: #fff;
+	color: var(--pdg-ink);
+}
+.rename-input:focus {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(95, 84, 152, 0.25);
+}
+
+/* A refusal (empty, duplicate, comma in a variable name) keeps the field open
+   and says why, rather than reverting and leaving the user guessing. */
+.rename-refusal {
+	font-size: 0.68rem;
+	line-height: 1.3;
+	color: var(--pdg-red);
+	margin-top: 0.2rem;
+}
+.rename-refusal:empty { display: none; }
 
 .inspector-cpd .table {
 	font-size: 0.75rem;
@@ -465,7 +663,9 @@ body {
 
 .score-panel {
 	position: fixed;
-	bottom: 4rem;      /* clears the toolbar, which sits at bottom: var(--gutter) */
+	/* The toolbar has moved to the bottom LEFT, so this no longer has to clear
+	   it — the right rail is now the score panel alone. */
+	bottom: var(--gutter);
 	right: var(--rail-right);
 	z-index: 10;
 	background: rgba(255,255,255,0.95);
@@ -475,6 +675,15 @@ body {
 	font-size: 0.8rem;
 	box-shadow: 0 2px 8px rgba(0,0,0,0.1);
 	min-width: 120px;
+}
+
+/* The toolbar (bottom left, ~427px) and this panel (bottom right of the canvas
+   region) are only side by side on a wide window: the panel's left edge sits at
+   100vw − rail-right − its own ~226px, which clears the toolbar's 443px only
+   above ~965px. Below that, stack the panel above the toolbar the way it used to
+   sit above the old bottom-right one. */
+@media (max-width: 1000px) {
+	.score-panel { bottom: 4.5rem; }
 }
 
 .score-row {

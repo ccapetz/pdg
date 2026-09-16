@@ -8,6 +8,14 @@ const STRETCH_FACTOR = 1.2;
 // const OPT_DIST = { 1:25,  2:35,  3:50, 4: 65, 5:80, 6:95 };
 const OPT_DIST = { 1:25,  2:35,  3:50, 4: 65, 5:80, 6:95 };
 
+// Below this, a per-arc score is rounding, not signal. A CONSISTENT model scores
+// every arc at float noise (~±1e-17 on the smoking BN, whose Inc is 5.95e-18), and
+// the ramp normalizes against the largest score it has — so without a floor, noise
+// divided by noise saturates and arcs were painted nearly full green and exactly
+// --pdg-red on a model with no inconsistency at all. Shared with fmtArcScore in
+// pdgviz.js so the colour and the printed number agree on what counts as zero.
+const SCORE_NOISE = 1e-6;
+
 function default_separation(nsibls, isLoop) {
 	return (nsibls in OPT_DIST ? OPT_DIST[nsibls] : 20*nsibls) + sgn(isLoop)*50;
 }
@@ -1042,10 +1050,16 @@ context.globalAlpha = 0.5;
 				restyle_links();
 			}
 	}
+	// `pickN` / `ontick` are called bare, NOT as `pdg.pickN` / `pdg.tick`. The split
+	// of the old monolith into pdgviz.js + pdg-view.js put a closure boundary here,
+	// and `pdg` is a `let` inside pdgviz.js's jQuery-ready callback — invisible from
+	// this file. Three such references survived the split (fb4fe34a), so the very
+	// first line of stroke() threw ReferenceError on every arrow completion and draw
+	// mode could not finish a single edge between 2022 and now.
 	function stroke(temp_link, endpt) {
 		let newtgts = [], newsrcs = [];
 		
-		let pickobj = pdg.pickN(endpt);
+		let pickobj = pickN(endpt);
 		if( pickobj ) {
 			// disable self-edges (for now) --- they're very annoying and easy to make by accident
 			if((temp_link.srcs.length == 1) && (temp_link.srcs[0] == pickobj.id)) {
@@ -1079,7 +1093,7 @@ context.globalAlpha = 0.5;
 				// just make the new node.
 				// console.log(event, temp_link, action);
 				if(temp_link.srcs.length == 0 && mag(subv(vec2(endpt), vec2(temp_link))) <= 20) {
-					pdg.tick();	return;
+					ontick();	return;
 				}
 			}
 		}
@@ -1098,23 +1112,95 @@ context.globalAlpha = 0.5;
 		new_link(newsrcs, newtgts, fresh_label(), [temp_link.x, temp_link.y]);
 		simulation.alpha(0.5).alphaTarget(0).restart();
 		
-		pdg.tick();	
+		ontick();
 	}
+	// Returns the reason a rename is refused, or null if it would be accepted.
+	// Node ids are joined with "," to key multinodes (ensure_multinode), so a comma
+	// inside a name would forge a collision with a hyperarc's source anchor.
+	function why_not_node_name(name, current) {
+		if(!name || !name.trim()) return "a variable needs a name";
+		if(name === current) return null;
+		if(name.includes(",")) return "no commas \u2014 they separate a hyperarc's sources";
+		if(name.startsWith("<")) return "names beginning with < are reserved";
+		if(nodes.some(n => n.id === name)) return "there is already a variable called " + name;
+		return null;
+	}
+
+	function why_not_link_label(label, current) {
+		if(!label || !label.trim()) return "an arc needs a label";
+		if(label === current) return null;
+		if(links.some(l => l.label === label)) return "there is already an arc called " + label;
+		return null;
+	}
+
 	function rename_node(old_name, new_name) {
-		obj = lookup[old_name];
-		let replacer = nid => (nid == obj.id) ? new_name : nid;
-		//TODO this will leave parentLinks in the dust...
+		let obj = lookup[old_name];
+		if(!obj) return false;
+		let refusal = why_not_node_name(new_name, old_name);
+		if(refusal) { console.warn("rename refused: " + refusal); return false; }
+		if(new_name === old_name) return true;
+
+		let replacer = nid => (nid == old_name) ? new_name : nid;
 		for(let l of links) {
 			l.srcs = l.srcs.map(replacer);
 			l.tgts = l.tgts.map(replacer);
 			l.source = l.srcs.join(",");
 			l.target = l.tgts.join(",");
 		}
-		delete lookup[obj.id];
+
+		delete lookup[old_name];
 		obj.id = new_name;
 		lookup[new_name] = obj;
+
+		// Multinodes are the anchors a hyperarc's several sources hang from, and
+		// they are keyed by the JOINED ids ("S,SH"), with a parentLink per member.
+		// The old rename left both behind — the arc kept pointing at a multinode
+		// whose components named a variable that no longer existed, so it stopped
+		// tracking the renamed node until the file was reloaded. This was the
+		// `//TODO this will leave parentLinks in the dust` in the original.
+		for(const [key, ob] of Object.entries(lookup)) {
+			if(!ob.components || !ob.components.includes(old_name)) continue;
+			delete lookup[key];
+			ob.components = ob.components.map(replacer);
+			ob.id = ob.components.join(",");
+			lookup[ob.id] = ob;
+		}
+		parentLinks = parentLinks.map(pl => ({
+			source : pl.source.split(",").map(replacer).join(","),
+			target : replacer(pl.target),
+		}));
+
 		align_node_dom();
-	}	
+		update_simulation();   // bipartite links are built from ids, so re-derive them
+		return true;
+	}
+
+	// An arc's label is its primary key: hedges, cpds, alpha/beta and edge_scores
+	// are all keyed by it on the wire. In memory those all live ON the link object
+	// and current_hypergraph() re-emits them from the new label, so renaming is a
+	// local change — except for the linknode's simulation id, which is derived from
+	// the label at construction and has to be rebuilt by hand.
+	function rename_link(old_label, new_label) {
+		let l = links.find(l => l.label === old_label);
+		if(!l) return false;
+		let refusal = why_not_link_label(new_label, old_label);
+		if(refusal) { console.warn("rename refused: " + refusal); return false; }
+		if(new_label === old_label) return true;
+
+		l.label = new_label;
+		let ln = linknodes.find(ln => ln.link === l);
+		if(ln) ln.id = "\u2113" + new_label;
+
+		// A score was keyed by the OLD label, so it no longer describes this arc.
+		// Dropping it returns the arc to neutral rather than leaving a stale colour
+		// attached to a name that never produced it.
+		delete l.inc_score;
+
+		restyle_links();
+		update_simulation();
+		ontick();
+		return true;
+	}
 	function delete_selection() {		
 		simulation.stop();
 		nodes = nodes.filter(n => !n.selected);
@@ -1157,14 +1243,30 @@ context.globalAlpha = 0.5;
 		handle: handle,
 		new_node : new_node,
 		new_link : new_link,
+		// Exported because they are this view's naming authority — they scan its own
+		// `nodes` / `links` for collisions, so a caller cannot reimplement them.
+		// pdgviz.js's node-creation path called both and got a TypeError on the
+		// first and a ReferenceError on the second.
+		fresh_node_name : fresh_node_name,
+		fresh_label : fresh_label,
 		point_select : point_select,
 		rename_node : rename_node,
+		rename_link : rename_link,
+		// Exposed so the inspector can refuse a rename with the same reason the view
+		// would, and say it in the panel instead of only in the console.
+		why_not_node_name : why_not_node_name,
+		why_not_link_label : why_not_link_label,
 		select_all : select_all,
 		delete_selection : delete_selection,
 		update_simulation : update_simulation,
 		set_edge_scores(scores) {
 			for (const l of links) {
-				l.inc_score = parse_score(scores[l.label]);
+				const v = parse_score(scores[l.label]);
+				// Snap noise to exact zero at the point of storage rather than in each
+				// consumer, so the colour, the printed number and any future readout
+				// cannot disagree about which arcs scored nothing.
+				l.inc_score = (v != null && Number.isFinite(v) && Math.abs(v) < SCORE_NOISE)
+					? 0 : v;
 			}
 			// Normalize the ramp against FINITE scores only — otherwise a single
 			// infinite edge sends _inc_max to Infinity and every finite edge
@@ -1203,6 +1305,10 @@ context.globalAlpha = 0.5;
 		get links() { return links; },
 		get lookup() { return lookup; },
 		renderLatexLabel : renderLatexLabel,
+		// Exposed so the node view can tint each arc row with the colour that arc
+		// is actually drawn in — the score colour is computed inside restyle_arcs
+		// and never written back onto the link.
+		inc_color : inc_color,
 		pickL : pickL,
 		pickN : pickN,
 		picksL : picksL,

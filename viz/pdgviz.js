@@ -80,17 +80,84 @@ function buildCpdTable(link) {
 	return html;
 }
 
+// Click-to-edit for the inspector's title. The displayed name goes through
+// renderMathLabel (an arc label may be TeX), so display and edit cannot be the
+// same node: clicking swaps in a plain <input> carrying the RAW name, and the
+// rendered form comes back on commit. Enter/blur commits, Escape cancels.
+//
+// `validate` returns a refusal string or null, and comes from the view itself
+// (why_not_node_name / why_not_link_label) so the panel refuses exactly what the
+// model would, and says why, instead of silently reverting.
+function makeRenameable(el, getName, validate, commit) {
+	el.classList.add('renameable');
+	el.title = 'Click to rename';
+	el.onclick = function() {
+		if (el.querySelector('input')) return;   // already editing
+		const current = getName();
+		const input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'rename-input';
+		input.value = current;
+		input.setAttribute('aria-label', 'Rename');
+
+		const hint = document.createElement('div');
+		hint.className = 'rename-refusal';
+
+		el.textContent = '';
+		el.append(input, hint);
+		input.focus();
+		input.select();
+
+		let done = false;
+		function finish(accept) {
+			if (done) return;
+			const name = input.value.trim();
+			if (accept && name !== current) {
+				const refusal = validate(name, current);
+				if (refusal) {                      // stay in the field, say why
+					hint.textContent = refusal;
+					input.focus();
+					return;
+				}
+				done = true;
+				commit(name);
+				return;
+			}
+			done = true;
+			el.innerHTML = renderMathLabel(current);
+		}
+		input.addEventListener('keydown', e => {
+			// The window-level keydown handler treats bare letters as mode/edit
+			// shortcuts. It bails on INPUT elements, but stopping here too keeps a
+			// stray 'x' from ever reaching a delete-selection path.
+			e.stopPropagation();
+			if (e.key === 'Enter')  { e.preventDefault(); finish(true); }
+			if (e.key === 'Escape') { e.preventDefault(); finish(false); }
+		});
+		input.addEventListener('blur', () => finish(true));
+	};
+}
+
 // `onEdit` is invoked after any \u03b1/\u03b2 change so the caller can repaint \u2014 \u03b1 and \u03b2 are
 // rendered geometrically (opacity and thickness), so an edit that does not repaint
 // leaves the picture contradicting the panel. Passed in rather than referenced
 // directly because redraw() lives inside the page's jQuery-ready closure.
-function showEdgeInspector(link, onEdit) {
+function showEdgeInspector(link, onEdit, view) {
 	const panel = document.getElementById('inspector');
 	panel.querySelector('.inspector-empty').style.display = 'none';
+	panel.querySelector('.inspector-node').style.display = 'none';
 	const content = panel.querySelector('.inspector-content');
 	content.style.display = '';
 
-	panel.querySelector('.inspector-label').innerHTML = renderMathLabel(link.label);
+	const titleEl = content.querySelector('.inspector-label');
+	titleEl.innerHTML = renderMathLabel(link.label);
+	if (view) makeRenameable(titleEl, () => link.label,
+		(name, cur) => view.why_not_link_label(name, cur),
+		name => {
+			view.rename_link(link.label, name);
+			showEdgeInspector(link, onEdit, view);   // re-render: the label is the key
+			if (onEdit) onEdit();
+		});
 	panel.querySelector('.inspector-srcs').textContent =
 		link.srcs.length ? link.srcs.join(', ') : '\u2205 (prior)';
 	panel.querySelector('.inspector-tgts').textContent = link.tgts.join(', ');
@@ -144,10 +211,130 @@ function showEdgeInspector(link, onEdit) {
 	}
 }
 
+// A PDG stores everything quantitative on its ARCS: a node carries no cpd, no
+// weight, nothing but a name and a domain. So the node view answers the one
+// question a node can answer — "what asserts something about this variable?" —
+// and each arc it lists is a shortcut into the full edge view.
+//
+// The domain is not stored either (`node.values` is a hardcoded [0,1] placeholder
+// from PDGView.load, and the JSON schema has no domain field — server.py infers
+// domains from cpd keys). We do the same inference here, from an arc that has
+// this node as its sole target: its cpd rows are keyed by exactly this node's
+// values. Falling back to the source-combo keys of an outgoing arc only works
+// when that arc has a single source, or the keys are comma-joined tuples.
+function nodeStates(nodeId, links) {
+	for (const l of links) {
+		if (l.cpd && l.tgts.length === 1 && l.tgts[0] === nodeId) {
+			const firstRow = l.cpd[Object.keys(l.cpd)[0]];
+			if (firstRow) return Object.keys(firstRow);
+		}
+	}
+	for (const l of links) {
+		if (l.cpd && l.srcs.length === 1 && l.srcs[0] === nodeId) {
+			return Object.keys(l.cpd);
+		}
+	}
+	return null;
+}
+
+function fmtArcScore(v) {
+	if (v == null || Number.isNaN(v)) return '';
+	if (v === Infinity) return '\u221e';
+	const a = Math.abs(v);
+	// A consistent model scores at float noise (the smoking BN's arcs come back at
+	// ~-1e-17). toFixed(3) renders that as "-0.000", which reads as a real signed
+	// quantity; it is zero, so say zero.
+	// SCORE_NOISE is pdg-view.js's, so this number and the arc's colour agree on
+	// where zero stops.
+	if (a < SCORE_NOISE) return '0';
+	return a < 0.001 ? v.toExponential(1) : v.toFixed(3);
+}
+
+// One row per arc. `onPick` gets the link, so the caller decides what selecting
+// means (select on canvas + repaint + open the edge view) without this knowing
+// about either pdg or redraw.
+function buildArcChip(link, colorOf, onPick) {
+	const chip = document.createElement('button');
+	chip.type = 'button';
+	chip.className = 'arc-chip' + (link.selected ? ' selected' : '');
+	// The left border repeats the arc's own colour on the canvas, so the row and
+	// the curve it refers to are identifiable as the same thing. Unscored arcs
+	// return null, and the chip keeps its neutral hairline.
+	const col = colorOf(link);
+	if (col) chip.style.setProperty('--chip-accent', col);
+
+	const label = document.createElement('span');
+	label.className = 'arc-chip-label';
+	label.innerHTML = renderMathLabel(link.label);
+
+	const ends = document.createElement('span');
+	ends.className = 'arc-chip-ends';
+	// Always written source → target, never relative to the node you clicked: an
+	// arc's direction is a fact about the arc, and re-orienting it per panel would
+	// make the same arc read differently from its two endpoints.
+	const srcs = link.srcs.length ? link.srcs.join(',') : '\u2205';
+	ends.textContent = srcs + ' \u2192 ' + link.tgts.join(',');
+	ends.title = ends.textContent;
+
+	const score = document.createElement('span');
+	score.className = 'arc-chip-score';
+	score.textContent = fmtArcScore(link.inc_score);
+	if (score.textContent) score.title = 'per-arc inconsistency';
+
+	chip.append(label, ends, score);
+	chip.addEventListener('click', () => onPick(link));
+	return chip;
+}
+
+function showNodeInspector(node, pdg, onPick) {
+	const panel = document.getElementById('inspector');
+	panel.querySelector('.inspector-empty').style.display = 'none';
+	panel.querySelector('.inspector-content').style.display = 'none';
+	panel.querySelector('.inspector-node').style.display = '';
+
+	const nameEl = panel.querySelector('.node-name');
+	nameEl.innerHTML = renderMathLabel(node.id);
+	makeRenameable(nameEl, () => node.id,
+		(name, cur) => pdg.why_not_node_name(name, cur),
+		name => {
+			pdg.rename_node(node.id, name);
+			// Re-render rather than patching the title: every arc row prints the
+			// endpoints, so they all carry the old name until redrawn.
+			showNodeInspector(node, pdg, onPick);
+			pdg.tick();
+		});
+
+	const states = nodeStates(node.id, pdg.links);
+	const valEl = panel.querySelector('.node-values');
+	if (states) valEl.textContent = states.join(', ');
+	else valEl.innerHTML = '<span class="node-values-unknown">not determined by any cpd</span>';
+
+	const incoming = pdg.links.filter(l => l.tgts.includes(node.id));
+	const outgoing = pdg.links.filter(l => l.srcs.includes(node.id));
+
+	for (const [links, listSel, countSel, empty] of [
+		[incoming, '.node-arcs-in',  '.node-count-in',  'nothing asserts a cpd over this variable'],
+		[outgoing, '.node-arcs-out', '.node-count-out', 'this variable conditions nothing'],
+	]) {
+		const host = panel.querySelector(listSel);
+		host.innerHTML = '';
+		panel.querySelector(countSel).textContent = links.length ? links.length : '';
+		if (!links.length) {
+			const none = document.createElement('div');
+			none.className = 'node-arcs-empty';
+			none.textContent = empty;
+			host.appendChild(none);
+			continue;
+		}
+		for (const l of links) host.appendChild(buildArcChip(l, pdg.inc_color, onPick));
+	}
+}
+
 function hideInspector() {
 	const panel = document.getElementById('inspector');
 	panel.querySelector('.inspector-empty').style.display = '';
 	panel.querySelector('.inspector-content').style.display = 'none';
+	panel.querySelector('.inspector-node').style.display = 'none';
 }
 
 $(function() {
@@ -275,6 +462,10 @@ $(function() {
 		const ob = await res.json();
 
 		if (pdg) pdg.load(ob); else initPDG(ob);
+		// The panel holds a reference to a node/link from the OLD model, which
+		// load() has just discarded — editing through a stale panel would write into
+		// an object nothing draws.
+		hideInspector();
 
 		// Each example ships the γ/ε under which it shows what it is meant to show
 		// (C8 needs ε=1e-3 to dodge the opt_joint hard-zero divergence), so applying
@@ -347,6 +538,23 @@ $(function() {
 	$('#load-button').click(function(e){
 		$('#fileupload').click();
 	})
+	// Selecting an arc from the node view has to do on the canvas what clicking it
+	// would have done — otherwise the panel shows one arc while a different one is
+	// highlighted in the picture.
+	function inspectNode(node) {
+		showNodeInspector(node, pdg, function(link) {
+			pdg.links.forEach(l => { l.selected = (l === link); });
+			pdg.nodes.forEach(n => { n.selected = false; });
+			pdg.restyle_nodes();
+			pdg.restyle_links();
+			redraw();
+			showEdgeInspector(link, redraw, pdg);
+		});
+	}
+
+	$('#inspector-node-close').click(function() {
+		hideInspector();
+	});
 	$('#inspector-close').click(function() {
 		hideInspector();
 	});
@@ -394,7 +602,15 @@ $(function() {
 		document.getElementById('score-inc').textContent = fmtScore(result.inc);
 		document.getElementById('score-idef').textContent = fmtScore(result.idef);
 		renderMarginals(result.marginals);
-		if (result.edge_scores) pdg.set_edge_scores(result.edge_scores);
+		if (result.edge_scores) {
+			pdg.set_edge_scores(result.edge_scores);
+			// Arcs are SVG (restyle_arcs), not canvas — redraw() below only repaints
+			// the canvas, so without this the new score colours did not appear until
+			// something else happened to call ontick(): a drag, a resize, a click.
+			// Scoring and then not touching the mouse left every arc neutral, which
+			// read as "scoring does not colour anything".
+			pdg.restyle_links();
+		}
 		redraw();
 	}
 
@@ -453,6 +669,7 @@ $(function() {
 			// console.log(e);
 			let ob = JSON.parse(e.target.result);
 			pdg.load(ob);
+			hideInspector();   // panel still points at the previous model's objects
 			hideScoreReadout();
 			lastScoreAction = null;
 			currentIters = DEFAULT_ITERS;
@@ -711,7 +928,7 @@ $(function() {
 			// if(!name) return;
 			// pdg.rename_node(obj.id, name);
 		} else if(link) { // inspect selected edge
-			showEdgeInspector(link, redraw);
+			showEdgeInspector(link, redraw, pdg);
 		} else { // nothing selected; create new variable here.
 			setTimeout(function() {
 				let name = promptForName("Enter A Variable Name",
@@ -725,7 +942,7 @@ $(function() {
 					// todo: fold out this functionality, shared with click below.
 					new_tgts = temp_link.tgts.slice(1);
 					new_tgts.push(newtgt.id);
-					pdg.new_link(temp_link.srcs, new_tgts, fresh_label(), [temp_link.x, temp_link.y]);
+					pdg.new_link(temp_link.srcs, new_tgts, pdg.fresh_label(), [temp_link.x, temp_link.y]);
 					temp_link = null;
 				}
 				pdg.tick();
@@ -811,9 +1028,12 @@ $(function() {
 			
 		} else if(mode == 'move') { // selection in manipulate mode
 			pdg.point_select(e, !e.shiftKey);
-			let clickedLink = pdg.pickL(e);
-			if (clickedLink) showEdgeInspector(clickedLink, redraw);
-			else if (!pdg.pickN(e)) hideInspector();
+			let clickedLink = pdg.pickL(e), clickedNode = pdg.pickN(e);
+			// An arc wins over a node under the same pointer, matching point_select,
+			// which applies both but treats the link as the more specific pick.
+			if (clickedLink) showEdgeInspector(clickedLink, redraw, pdg);
+			else if (clickedNode) inspectNode(clickedNode);
+			else hideInspector();
 		}
 		// else if(mode == 'select'){
 		// 	let link = pickL(e);

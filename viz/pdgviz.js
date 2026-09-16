@@ -20,6 +20,69 @@ function rowSum(cpd, combo) {
 	return Object.values(cpd[combo]).reduce((s, v) => s + (v || 0), 0);
 }
 
+// A cell is "blank" when it has never been filled in. Distinct from 0, which is
+// a real claim ("this outcome cannot happen") and the difference that makes
+// c1-two-coins infinitely inconsistent — so the two must never be conflated.
+function isBlank(v) { return v === null || v === undefined || v === ''; }
+
+function rowBlanks(cpd, combo) {
+	return Object.keys(cpd[combo]).filter(t => isBlank(cpd[combo][t]));
+}
+
+// A row is finished when nothing is blank and it sums to 1. Both failures get
+// the same red, because both mean the same thing to the solver: this is not a
+// distribution yet.
+function rowIncomplete(cpd, combo) {
+	return rowBlanks(cpd, combo).length > 0 || Math.abs(rowSum(cpd, combo) - 1) > 0.001;
+}
+
+function cpdIncompleteRows(cpd) {
+	return cpd ? Object.keys(cpd).filter(c => rowIncomplete(cpd, c)) : [];
+}
+
+// Dirichlet(1,...,1) over k outcomes is the uniform distribution on the simplex:
+// every distribution over those k states is equally likely. Sampled the standard
+// way — k independent Exp(1) draws, normalized. 1-Math.random() because
+// Math.random() can return exactly 0 and log(0) is -Infinity.
+function dirichlet1(k) {
+	const g = Array.from({length: k}, () => -Math.log(1 - Math.random()));
+	const total = g.reduce((a, b) => a + b, 0);
+	return g.map(v => v / total);
+}
+
+// Fills in what is missing, and only what is missing:
+//
+//   - a row that is already a distribution is left alone;
+//   - a row with blanks whose filled cells sum to s < 1 gets the remaining 1-s
+//     mass spread over the blanks by a Dirichlet(1) draw, so the numbers you
+//     typed keep the meaning you gave them;
+//   - a row with no room left (no blanks, or the filled cells already sum to 1
+//     or more, which is what happens when a variable GAINS a state and the old
+//     row is already saturated) is resampled whole — there is no way to honour
+//     both the old numbers and the new state.
+//
+// Returns a count of what it did, so the caller can say so.
+function autofillCpd(cpd) {
+	let filled = 0, resampled = 0;
+	for (const combo of Object.keys(cpd)) {
+		if (!rowIncomplete(cpd, combo)) continue;
+		const states = Object.keys(cpd[combo]);
+		const blanks = rowBlanks(cpd, combo);
+		const mass = 1 - Object.keys(cpd[combo])
+			.filter(t => !isBlank(cpd[combo][t]))
+			.reduce((sum, t) => sum + cpd[combo][t], 0);
+
+		if (blanks.length && mass > 1e-9) {
+			dirichlet1(blanks.length).forEach((p, i) => { cpd[combo][blanks[i]] = p * mass; });
+			filled++;
+		} else {
+			dirichlet1(states.length).forEach((p, i) => { cpd[combo][states[i]] = p; });
+			resampled++;
+		}
+	}
+	return { filled, resampled };
+}
+
 // α/β round-trip through JSON as either numbers or the strings "inf"/"∞", so the
 // inspector has to speak both. Returns undefined for blank input, which the caller
 // treats as "unset" (delete the property) rather than "set to 1" — the JSON omits
@@ -66,12 +129,14 @@ function buildCpdTable(link) {
 	for (const t of tgtStates) html += `<th class="text-center">${t}</th>`;
 	html += '</tr></thead><tbody>';
 	for (const combo of srcCombos) {
-		const invalid = Math.abs(rowSum(cpd, combo) - 1) > 0.001;
-		html += `<tr${invalid ? ' class="cpd-row-invalid"' : ''}>`;
+		html += `<tr${rowIncomplete(cpd, combo) ? ' class="cpd-row-invalid"' : ''}>`;
 		if (link.srcs.length) html += `<td class="text-muted small">${combo}</td>`;
 		for (const t of tgtStates) {
 			const p = cpd[combo][t];
-			const val = typeof p === 'number' ? p.toFixed(4) : p;
+			// A blank renders blank. Writing 0 into an unfilled cell would assert a
+			// probability nobody chose, and 0 is the one value with teeth: an arc
+			// that rules out something believed scores Inc = infinity.
+			const val = typeof p === 'number' ? p.toFixed(4) : '';
 			html += `<td><input type="number" class="cpd-input" min="0" max="1" step="0.0001" value="${val}" data-combo="${combo}" data-tgt="${t}"></td>`;
 		}
 		html += '</tr>';
@@ -194,18 +259,49 @@ function showEdgeInspector(link, onEdit, view) {
 		? buildCpdTable(link)
 		: '<span class="no-cpd">No CPD loaded</span>';
 
+	// Autofill is offered only while something is actually missing, and says what
+	// it did afterwards — "3 rows filled" vs "1 row resampled" are different
+	// events and the second one overwrote numbers, so it should not pass silently.
+	const noteEl = panel.querySelector('.cpd-note');
+	const fillBtn = document.getElementById('cpd-autofill');
+	const refreshFill = () => {
+		const gaps = cpdIncompleteRows(link.cpd).length;
+		fillBtn.hidden = !gaps;
+		fillBtn.textContent = gaps ? `Autofill ${gaps} row${gaps > 1 ? 's' : ''}` : 'Autofill';
+	};
+	noteEl.textContent = '';
+	refreshFill();
+	const freshBtn = fillBtn.cloneNode(true);   // drop listeners bound to a prior arc
+	fillBtn.replaceWith(freshBtn);
+	freshBtn.addEventListener('click', () => {
+		const { filled, resampled } = autofillCpd(link.cpd);
+		showEdgeInspector(link, onEdit, view);
+		const said = [];
+		if (filled)    said.push(`${filled} row${filled > 1 ? 's' : ''} filled`);
+		if (resampled) said.push(`${resampled} row${resampled > 1 ? 's' : ''} resampled whole`);
+		panel.querySelector('.cpd-note').textContent =
+			said.length ? said.join(', ') + ' \u2014 Dirichlet(1)' : '';
+		if (onEdit) onEdit();
+	});
+
 	if (link.cpd) {
 		cpdEl.querySelectorAll('.cpd-input').forEach(input => {
 			input.addEventListener('change', () => {
 				const combo = input.dataset.combo;
 				const tgt = input.dataset.tgt;
-				let val = parseFloat(input.value);
-				if (isNaN(val)) val = 0;
-				val = Math.max(0, Math.min(1, val));
-				input.value = val.toFixed(4);
-				link.cpd[combo][tgt] = val;
+				// Clearing a cell returns it to blank rather than to 0 — emptying a
+				// field is how you say "I have not decided", and 0 says the opposite.
+				if (input.value.trim() === '') {
+					link.cpd[combo][tgt] = null;
+				} else {
+					let val = parseFloat(input.value);
+					if (isNaN(val)) val = 0;
+					val = Math.max(0, Math.min(1, val));
+					input.value = val.toFixed(4);
+					link.cpd[combo][tgt] = val;
+				}
 				const row = input.closest('tr');
-				row.classList.toggle('cpd-row-invalid', Math.abs(rowSum(link.cpd, combo) - 1) > 0.001);
+				row.classList.toggle('cpd-row-invalid', rowIncomplete(link.cpd, combo));
 			});
 		});
 	}
@@ -429,6 +525,7 @@ $(function() {
 	function hideScoreReadout() {
 		document.getElementById('score-readout').style.display = 'none';
 		document.getElementById('score-marginals').innerHTML = '';
+		document.getElementById('score-skipped').textContent = '';
 	}
 
 	function rerunLastScore() {
@@ -614,18 +711,47 @@ $(function() {
 		redraw();
 	}
 
+	// An arc whose cpd still has blanks is not a distribution, and posting it would
+	// either 500 in CPT.from_ddict or, worse, be quietly normalized into numbers
+	// nobody chose. It is dropped from the payload instead — which is exactly what
+	// the server already does with an arc that has no cpd at all, i.e. the arc
+	// stays structural — and the panel says which arcs that happened to, because a
+	// score computed over fewer arcs than you can see is otherwise indistinguishable
+	// from one computed over all of them.
+	function scoreablePayload() {
+		const state = pdg.state;
+		const kept = {}, skipped = [];
+		for (const [label, cpd] of Object.entries(state.cpds || {})) {
+			if (cpdIncompleteRows(cpd).length) skipped.push(label);
+			else kept[label] = cpd;
+		}
+		return {
+			hypergraph: { ...state, cpds: Object.keys(kept).length ? kept : undefined },
+			skipped,
+		};
+	}
+
+	function renderSkipped(skipped) {
+		const el = document.getElementById('score-skipped');
+		if (!skipped.length) { el.textContent = ''; return; }
+		el.textContent = `${skipped.length} arc${skipped.length > 1 ? 's' : ''} ignored` +
+			` \u2014 incomplete CPD: ${skipped.join(', ')}`;
+	}
+
 	$('#score-button').click(async function() {
 		$(this).prop('disabled', true).text('Scoring…');
+		const payload = scoreablePayload();
 		try {
 			const res = await fetch('/api/score', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					hypergraph: pdg.state, gamma: getGamma(), epsilon: getEpsilon()
+					hypergraph: payload.hypergraph, gamma: getGamma(), epsilon: getEpsilon()
 				})
 			});
 			if (!res.ok) throw new Error(await res.text());
 			applyScoreResult(await res.json());
+			renderSkipped(payload.skipped);
 			lastScoreAction = 'score';
 		} catch(e) {
 			alert('Score failed: ' + e.message);
@@ -636,17 +762,19 @@ $(function() {
 
 	$('#optimize-button').click(async function() {
 		$(this).prop('disabled', true).text('Optimizing…');
+		const payload = scoreablePayload();
 		try {
 			const res = await fetch('/api/optimize', {
 				method: 'POST',
 				headers: { 'Content-Type': 'application/json' },
 				body: JSON.stringify({
-					hypergraph: pdg.state, gamma: getGamma(),
+					hypergraph: payload.hypergraph, gamma: getGamma(),
 					epsilon: getEpsilon(), iters: currentIters
 				})
 			});
 			if (!res.ok) throw new Error(await res.text());
 			applyScoreResult(await res.json());
+			renderSkipped(payload.skipped);
 			lastScoreAction = 'optimize';
 		} catch(e) {
 			alert('Optimize failed: ' + e.message);

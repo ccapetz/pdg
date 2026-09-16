@@ -131,6 +131,10 @@
 				<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
 				<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
 				<div id="score-marginals" class="score-marginals"></div>
+				<!-- Arcs left out of the score because their cpd is not finished. Named,
+				     not just counted: a number computed over fewer arcs than are on
+				     screen is otherwise indistinguishable from one over all of them. -->
+				<div id="score-skipped" class="score-skipped"></div>
 			</div>
 		</div>
 
@@ -178,8 +182,16 @@
 					<div class="inspector-weight-hint text-body-tertiary" style="font-size:.7rem"></div>
 
 					<hr class="my-2">
-					<div class="text-muted small mb-2">CPD</div>
+					<div class="cpd-head d-flex align-items-center justify-content-between mb-2">
+						<span class="text-muted small">CPD</span>
+						<!-- Autofill samples Dirichlet(1) — uniform over the simplex — into
+						     whatever is still blank. Hidden unless the table has a gap, so it
+						     is an answer to a visible problem rather than a standing invitation
+						     to replace hand-entered numbers with noise. -->
+						<button type="button" id="cpd-autofill" class="cpd-autofill" hidden>Autofill</button>
+					</div>
 					<div class="inspector-cpd"></div>
+					<div class="cpd-note"></div>
 				</div>
 			</div>
 

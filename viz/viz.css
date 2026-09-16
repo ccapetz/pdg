@@ -417,6 +417,44 @@
 	font-size: 0.85rem;
 }
 
+/* ── CPD completion ──────────────────────────────────────────────────────
+   Autofill appears only when the table has a gap, so it is a response to a
+   visible problem rather than a standing offer to overwrite your numbers. */
+.cpd-autofill {
+	font-family: inherit;
+	font-size: 0.68rem;
+	line-height: 1;
+	padding: 0.2rem 0.45rem;
+	color: var(--pdg-select);
+	background: #fff;
+	border: 1px solid var(--pdg-select);
+	border-radius: 4px;
+	cursor: pointer;
+	transition: background-color 0.12s, color 0.12s;
+}
+.cpd-autofill:hover { background: var(--pdg-select); color: #fff; }
+.cpd-autofill:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(95, 84, 152, 0.25);
+}
+
+.cpd-note {
+	margin-top: 0.3rem;
+	font-size: 0.68rem;
+	color: #868e96;
+}
+.cpd-note:empty { display: none; }
+
+/* Arcs dropped from a score because their cpd is unfinished. Red, because the
+   number above it is answering a smaller question than it appears to. */
+.score-skipped {
+	margin-top: 0.35rem;
+	font-size: 0.68rem;
+	line-height: 1.35;
+	color: var(--pdg-red);
+}
+.score-skipped:empty { display: none; }
+
 .cpd-input {
 	width: 100%;
 	min-width: 52px;

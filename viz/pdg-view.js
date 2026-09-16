@@ -16,6 +16,39 @@ const OPT_DIST = { 1:25,  2:35,  3:50, 4: 65, 5:80, 6:95 };
 // pdgviz.js so the colour and the printed number agree on what counts as zero.
 const SCORE_NOISE = 1e-6;
 
+// The JSON schema has no domain field: server.py's _infer_domains reads a
+// variable's values back out of the cpd keys of an arc that mentions it. So a
+// node's domain only exists once some cpd spells it out, and a freshly drawn
+// node has none at all. This is the default we give it — the dissertation's own
+// convention, where PS takes ps / ~ps and C takes c / ~c.
+//
+// Commas are stripped because multi-source cpd rows are comma-joined ("s, sh"),
+// so a value containing one would be re-split into the wrong states on load.
+function default_domain(name) {
+	const base = String(name).toLowerCase().replace(/,/g, "");
+	return [base, "~" + base];
+}
+
+// Every row key of a cpd: the cartesian product of the sources' domains, joined
+// the way server.py expects (it splits on "," and strips, so the space is
+// cosmetic — it matches the shipped smoking-cpd.json). No sources is not an
+// empty product: it is one row, under the schema's unit key.
+const UNIT_SRC_KEY = "\u22c6";
+
+function domain_product(names, lookup_fn) {
+	if(!names.length) return [UNIT_SRC_KEY];
+	let combos = [""];
+	for(const n of names) {
+		const states = lookup_fn(n);
+		const next = [];
+		for(const c of combos)
+			for(const st of states)
+				next.push(c === "" ? String(st) : c + ", " + st);
+		combos = next;
+	}
+	return combos;
+}
+
 function default_separation(nsibls, isLoop) {
 	return (nsibls in OPT_DIST ? OPT_DIST[nsibls] : 20*nsibls) + sgn(isLoop)*50;
 }
@@ -116,7 +149,10 @@ function PDGView(hypergraph, mousept) {
 		
 		// load nodes
 		nodes = hypergraph.nodes.map( function(varname) {
-			let ob = {id: varname, values: [0,1],
+			// values was a hardcoded [0,1] placeholder that nothing derived and
+			// nothing consumed. It is now the variable's real domain: seeded from the
+			// name and then corrected from the cpds below, mirroring _infer_domains.
+			let ob = {id: varname, values: default_domain(varname),
 				w : initw, h: inith, display: true};
 			lookup[varname] = ob;
 			return ob;
@@ -163,6 +199,7 @@ function PDGView(hypergraph, mousept) {
 				}
 			}
 		}
+		infer_domains();
 
 		// Per-arc confidences. These have to survive the browser round-trip: the UI
 		// posts `pdg.state` (i.e. current_hypergraph()) to /api/score and
@@ -763,6 +800,11 @@ context.globalAlpha = 0.5;
 		ln.x = initial_ln_pos[0] == undefined ? ln.x : initial_ln_pos[0];
 		ln.y = initial_ln_pos[1] == undefined ? ln.y : initial_ln_pos[1];
 
+		// A newly drawn arc gets an empty cpd of the right dimensions, so it is
+		// immediately editable in the inspector instead of being an arc you cannot
+		// put numbers on.
+		if(!lobj.cpd) lobj.cpd = cpd_skeleton(src, tgt);
+
 		linknodes.push(ln);
 		simulation.nodes(nodes.concat(linknodes));
 		simulation.force("bipartite").links(mk_bipartite_links(linknodes));
@@ -771,9 +813,62 @@ context.globalAlpha = 0.5;
 		
 		return lobj;
 	}
+	// The JS half of server.py's _infer_domains: a variable's real domain is
+	// whatever the cpds say, and only the default_domain guess if nothing says
+	// anything. Target states come from a row's column keys; a lone source's
+	// states are the row keys themselves; a multi-source arc's row keys are
+	// comma-joined, so each position contributes one variable's states.
+	//
+	// First writer wins, matching the server, so the two cannot disagree about a
+	// variable two arcs both mention.
+	function infer_domains() {
+		const seen = new Set();
+		const put = (name, states) => {
+			const n = lookup[name];
+			if(!n || seen.has(name) || !states.length) return;
+			n.values = [...states];
+			seen.add(name);
+		};
+		for(const l of links) {
+			if(!l.cpd) continue;
+			const rows = Object.keys(l.cpd);
+			if(!rows.length) continue;
+			const firstRow = l.cpd[rows[0]];
+			if(l.tgts.length === 1) put(l.tgts[0], Object.keys(firstRow));
+			if(l.srcs.length === 1) put(l.srcs[0], rows);
+			else if(l.srcs.length > 1) {
+				const per = l.srcs.map(() => []);
+				for(const combo of rows)
+					combo.split(",").map(p => p.trim()).forEach((st, i) => {
+						if(per[i] && !per[i].includes(st)) per[i].push(st);
+					});
+				l.srcs.forEach((src, i) => put(src, per[i]));
+			}
+		}
+	}
+
+	// A cpd of the right SHAPE but with no values in it: every row the sources can
+	// produce, every column the targets can take, each cell null. Drawing an arc
+	// used to leave no cpd at all, which the inspector could only report as "No CPD
+	// loaded" — there was nothing to type into, so a hand-drawn arc could never be
+	// given a distribution without editing the JSON by hand. null rather than 0
+	// because "not filled in yet" and "probability zero" are different claims, and
+	// only the first should be flagged as incomplete.
+	function cpd_skeleton(srcs, tgts) {
+		const states = n => (lookup[n] && lookup[n].values && lookup[n].values.length)
+			? lookup[n].values : default_domain(n);
+		const cols = domain_product(tgts, states);
+		const cpd = {};
+		for(const row of domain_product(srcs, states)) {
+			cpd[row] = {};
+			for(const c of cols) cpd[row][c] = null;
+		}
+		return cpd;
+	}
+
 	function new_node(vname, x,y) {
 		let ob = {
-			id: vname, 
+			id: vname, values: default_domain(vname),
 			x: x, y: y, vx: 0, vy:0,
 			w : initw, h : inith,  display: true};
 		nodes.push(ob);
@@ -1242,6 +1337,7 @@ context.globalAlpha = 0.5;
 		draw : draw,
 		handle: handle,
 		new_node : new_node,
+		cpd_skeleton : cpd_skeleton,
 		new_link : new_link,
 		// Exported because they are this view's naming authority — they scan its own
 		// `nodes` / `links` for collisions, so a caller cannot reimplement them.

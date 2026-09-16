@@ -15,8 +15,19 @@ __pycache__
 .claude/
 CLAUDE.md
 
-# The dissertation PDF is Oliver Richardson's, not ours to redistribute from a
-# public fork — and at 8.1 MB it was two thirds of everything tracked. Kept
-# locally; dissertation/*.md carries the citations that point into it
-# (printed p. N = PDF p. N+14).
+# Reference material and our own reading notes. This is a FORK of Oliver
+# Richardson's repo, and none of this belongs in his tree: the PDFs are his work
+# and other people's papers, not ours to redistribute from a public fork, and the
+# markdown is our commentary on them rather than anything the library or the viz
+# needs to run. All of it stays on disk.
+#
+# The PDF alone was 8.1 MB — two thirds of everything tracked; with the three
+# eleusis papers it was 10.4 MB of 12.1 MB, i.e. 86%.
+#
+# dissertation/*.md holds the citations into the PDF (printed p. N = PDF p. N+14)
+# and examples-catalog.md, which is the source for viz/gen_catalog_examples.py.
+# If any of that ever needs to be shared, it wants to be its own repo, not a
+# directory inside someone else's.
 oli-dissertation.pdf
+dissertation/
+eleusis/

@@ -683,8 +683,12 @@ $(function() {
 
 	function hideScoreReadout() {
 		document.getElementById('score-readout').style.display = 'none';
-		document.getElementById('score-marginals').innerHTML = '';
 		document.getElementById('score-skipped').textContent = '';
+		// A distribution belongs to the model that produced it; loading another one
+		// must not leave the previous joint on screen under the new picture.
+		lastDist = null;
+		conditionOn = null;
+		showDrawer(false);
 	}
 
 	function rerunLastScore() {
@@ -878,33 +882,163 @@ $(function() {
 		return n.toExponential(3);
 	}
 
-	// The marginals are the payoff of the whole exercise. "Inc = 0.675" says little
-	// on its own; "Pr(H) = 2/3 at γ=0, 3/4 at γ=1" IS the claim of Ex 4.1.
-	function renderMarginals(marginals) {
-		const host = document.getElementById('score-marginals');
+	// ── Distribution drawer ──────────────────────────────────────────────────
+	// Everything here is derived from the joint server-side (see _top_atoms,
+	// _mutual_info, _conditionals in server.py) because the joint itself is the
+	// product of every domain and does not belong on the wire.
+	let lastDist = null;        // the most recent {marginals, atoms, mi, conditionals}
+	let conditionOn = null;     // "PS=ps" while a value is selected, else null
+
+	function fmtProb(p) { return p.toFixed(3); }
+
+	function renderMarginalsCol() {
+		const host = document.getElementById('drawer-marginals');
 		host.innerHTML = '';
-		if (!marginals) return;
-		for (const [v, dist] of Object.entries(marginals)) {
+		if (!lastDist) return;
+		// Conditioning shows P(. | X=x) for the OTHER variables; the conditioned
+		// variable itself is pinned rather than listed as a degenerate 1.000.
+		const table = conditionOn && lastDist.conditionals && lastDist.conditionals[conditionOn]
+			? lastDist.conditionals[conditionOn]
+			: lastDist.marginals;
+		document.getElementById('marg-title').textContent =
+			conditionOn ? `P( \u00b7 | ${conditionOn.replace('=', ' = ')} )` : 'Marginals';
+		document.getElementById('cond-clear').hidden = !conditionOn;
+
+		for (const [v, dist] of Object.entries(table || {})) {
 			const row = document.createElement('div');
-			row.className = 'marg-row';
+			row.className = 'marg-line';
 			const name = document.createElement('span');
-			name.className = 'marg-var';
+			name.className = 'marg-name';
 			name.textContent = v;
-			const vals = document.createElement('span');
-			vals.className = 'marg-vals';
-			vals.textContent = Object.entries(dist)
-				.map(([k, p]) => `${k} ${Number(p).toFixed(3)}`)
-				.join('  ');
-			row.append(name, vals);
+			row.appendChild(name);
+			for (const [val, p] of Object.entries(dist)) {
+				const key = `${v}=${val}`;
+				const chip = document.createElement('button');
+				chip.type = 'button';
+				chip.className = 'marg-chip' + (conditionOn === key ? ' active' : '');
+				chip.disabled = !lastDist.conditionals || !(key in lastDist.conditionals);
+				chip.title = chip.disabled
+					? `${key} has probability 0 — nothing to condition on`
+					: `condition on ${key}`;
+				// The bar is painted as a background so the number stays readable on
+				// top of it; a separate bar element would double the row height for
+				// something that is only a rough magnitude cue.
+				chip.style.setProperty('--fill', `${Math.round(p * 100)}%`);
+				chip.innerHTML = `<span class="chip-val">${val}</span>` +
+					`<span class="chip-p">${fmtProb(p)}</span>`;
+				chip.addEventListener('click', () => {
+					conditionOn = conditionOn === key ? null : key;
+					renderMarginalsCol();
+				});
+				row.appendChild(chip);
+			}
 			host.appendChild(row);
 		}
 	}
 
-	function applyScoreResult(result) {
+	function renderAtomsCol() {
+		const host = document.getElementById('drawer-atoms');
+		host.innerHTML = '';
+		const a = lastDist && lastDist.atoms;
+		if (!a || !a.atoms.length) return;
+		document.getElementById('atoms-title').textContent =
+			a.tail_count ? `Top ${a.atoms.length} of ${a.total} worlds` : `All ${a.total} worlds`;
+
+		const max = a.atoms[0].p || 1;
+		for (const atom of a.atoms) {
+			const row = document.createElement('div');
+			row.className = 'atom-row';
+			const label = document.createElement('span');
+			label.className = 'atom-label';
+			label.textContent = a.vars.map(v => atom.assignment[v]).join(' ');
+			label.title = a.vars.map(v => `${v} = ${atom.assignment[v]}`).join(', ');
+			const bar = document.createElement('span');
+			bar.className = 'atom-bar';
+			// Scaled against the largest atom, not against 1: on a flat joint every
+			// bar would otherwise be a sliver, and the comparison that matters here
+			// is between atoms.
+			bar.style.width = `${Math.max(1, (atom.p / max) * 100)}%`;
+			const val = document.createElement('span');
+			val.className = 'atom-p';
+			val.textContent = fmtProb(atom.p);
+			const track = document.createElement('span');
+			track.className = 'atom-track';
+			track.appendChild(bar);
+			row.append(label, track, val);
+			host.appendChild(row);
+		}
+		if (a.tail_count) {
+			const tail = document.createElement('div');
+			tail.className = 'atom-tail';
+			tail.textContent = `remaining ${a.tail_count} worlds: ${fmtProb(a.tail_mass)}`;
+			host.appendChild(tail);
+		}
+	}
+
+	function renderMiCol() {
+		const host = document.getElementById('drawer-mi');
+		host.innerHTML = '';
+		const mi = lastDist && lastDist.mi;
+		if (!mi || mi.vars.length < 2) {
+			host.innerHTML = '<div class="drawer-empty">needs two variables</div>';
+			return;
+		}
+		const peak = Math.max(1e-9, ...mi.matrix.flat());
+		let html = '<table class="mi-table"><thead><tr><th></th>';
+		for (const v of mi.vars) html += `<th>${v}</th>`;
+		html += '</tr></thead><tbody>';
+		mi.vars.forEach((v, i) => {
+			html += `<tr><th>${v}</th>`;
+			mi.vars.forEach((w, j) => {
+				if (i === j) { html += '<td class="mi-diag"></td>'; return; }
+				const val = mi.matrix[i][j];
+				// Same grey->red ramp the arcs use, for the same reason: this is a
+				// magnitude on a scale whose zero means "nothing here".
+				const t = val / peak;
+				html += `<td class="mi-cell" style="--t:${t.toFixed(3)}" ` +
+					`title="I(${v};${w}) = ${val.toFixed(4)} bits">${val.toFixed(2)}</td>`;
+			});
+			html += '</tr>';
+		});
+		html += '</tbody></table>';
+		host.innerHTML = html;
+	}
+
+	function showDrawer(open) {
+		document.getElementById('joint-drawer').hidden = !open;
+		document.body.classList.toggle('drawer-open', open);
+		document.getElementById('drawer-toggle').hidden = !lastDist;
+		document.getElementById('drawer-toggle').innerHTML =
+			open ? 'Distribution &#9662;' : 'Distribution &#9652;';
+	}
+
+	function renderDistribution(result, source) {
+		lastDist = {
+			marginals: result.marginals,
+			atoms: result.atoms,
+			mi: result.mi,
+			conditionals: result.conditionals,
+		};
+		conditionOn = null;
+		document.getElementById('drawer-source').textContent = source;
+		renderMarginalsCol();
+		renderAtomsCol();
+		renderMiCol();
+		showDrawer(true);
+	}
+
+	$('#drawer-close').click(() => showDrawer(false));
+	$('#drawer-toggle').click(() => showDrawer(document.getElementById('joint-drawer').hidden));
+	$('#cond-clear').click(() => { conditionOn = null; renderMarginalsCol(); });
+
+	function applyScoreResult(result, source) {
 		document.getElementById('score-readout').style.display = '';
 		document.getElementById('score-inc').textContent = fmtScore(result.inc);
 		document.getElementById('score-idef').textContent = fmtScore(result.idef);
-		renderMarginals(result.marginals);
+		// The marginals moved into the drawer, where they sit beside the two things
+		// that explain what they left out: the most likely worlds, and the pairwise
+		// information the projection destroys.
+		renderDistribution(result, source);
 		if (result.edge_scores) {
 			pdg.set_edge_scores(result.edge_scores);
 			// Arcs are SVG (restyle_arcs), not canvas — redraw() below only repaints
@@ -956,7 +1090,7 @@ $(function() {
 				})
 			});
 			if (!res.ok) throw new Error(await res.text());
-			applyScoreResult(await res.json());
+			applyScoreResult(await res.json(), 'factor product');
 			renderSkipped(payload.skipped);
 			lastScoreAction = 'score';
 		} catch(e) {
@@ -979,7 +1113,7 @@ $(function() {
 				})
 			});
 			if (!res.ok) throw new Error(await res.text());
-			applyScoreResult(await res.json());
+			applyScoreResult(await res.json(), `optimized \u00b7 ${currentIters} iters`);
 			renderSkipped(payload.skipped);
 			lastScoreAction = 'optimize';
 		} catch(e) {

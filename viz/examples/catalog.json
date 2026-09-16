@@ -90,6 +90,16 @@
     "iters": 800
   },
   {
+    "file": "c2a-tanning-bed.json",
+    "title": "Tanning bed (BN + one arc)",
+    "source": "Ex 3.2, p. 56",
+    "tier": "Tier 1",
+    "note": "The smoking BN plus a second cause of cancer. A BN would have to rewrite p4 over {S, SH, T}; the PDG just gains an arc — and C now has two opinions, so Inc leaves zero. Five variables, 32 worlds: the distribution drawer is the point.",
+    "gamma": 1.0,
+    "epsilon": 0.0,
+    "iters": 800
+  },
+  {
     "file": "c8-modeled-bias.json",
     "title": "Coin with a modeled bias",
     "source": "Ex 4.1, pp. 121–122",

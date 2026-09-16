@@ -232,6 +232,135 @@ def _marginals(M: PDG, mu) -> dict[str, dict[str, float]]:
     return out
 
 
+def _joint_axes(mu):
+    """(names, domains, ndarray) for `mu`, read straight off the array.
+
+    Everything below works on mu.data directly rather than through
+    conditional_marginal, for two reasons: it sidesteps the permute bug that
+    already forced api_optimize to convert back to numpy, and marginalising with
+    np.sum over named axes is easier to check by eye than a query DSL.
+
+    Length-1 axes are the unit variable rv.Unit, which carries no information and
+    would otherwise appear as a variable with a single value.
+    """
+    import numpy as np
+
+    data = np.asarray(mu.data, dtype=float)
+    keep, names, doms = [], [], []
+    for i, v in enumerate(mu.varlist):
+        vals = [str(s) for s in v.ordered]
+        if len(vals) < 2:
+            continue
+        keep.append(i)
+        names.append(v.name)
+        doms.append(vals)
+    if len(keep) != data.ndim:
+        data = data.sum(axis=tuple(i for i in range(data.ndim) if i not in keep))
+    total = data.sum()
+    if total > 0:
+        data = data / total
+    return names, doms, data
+
+
+def _top_atoms(mu, k: int = 20) -> dict:
+    """The k most probable full assignments, plus what is left over.
+
+    Deliberately top-k rather than "the whole joint when it happens to be small":
+    the chart then has a fixed size no matter how many variables there are, and
+    the tail line keeps it honest — 20 bars accounting for 3% of the mass say so
+    rather than looking like the whole story.
+    """
+    import numpy as np
+
+    names, doms, data = _joint_axes(mu)
+    if not names:
+        return {"vars": [], "atoms": [], "tail_count": 0, "tail_mass": 0.0, "total": 0}
+
+    flat = data.ravel()
+    k = min(k, flat.size)
+    idx = np.argpartition(flat, -k)[-k:]
+    idx = idx[np.argsort(-flat[idx])]
+
+    atoms = []
+    for i in idx:
+        coords = np.unravel_index(i, data.shape)
+        atoms.append({
+            "assignment": {n: doms[a][c] for a, (n, c) in enumerate(zip(names, coords))},
+            "p": float(flat[i]),
+        })
+    shown = float(flat[idx].sum())
+    return {
+        "vars": names,
+        "atoms": atoms,
+        "tail_count": int(flat.size - k),
+        "tail_mass": float(max(0.0, 1.0 - shown)),
+        "total": int(flat.size),
+    }
+
+
+def _mutual_info(mu) -> dict:
+    """Pairwise mutual information I(X;Y), in bits.
+
+    The summary that survives when the joint does not fit on screen: sized by the
+    number of VARIABLES rather than by the product of their domains, and exactly
+    what the per-variable marginals throw away — 0 for a pair the joint treats as
+    independent, up to min(H(X), H(Y)) for a pair that determines each other.
+    """
+    import numpy as np
+
+    names, doms, data = _joint_axes(mu)
+    n = len(names)
+    matrix = [[0.0] * n for _ in range(n)]
+    for i in range(n):
+        for j in range(i + 1, n):
+            axes = tuple(a for a in range(n) if a not in (i, j))
+            pij = data.sum(axis=axes) if axes else data
+            pi = pij.sum(axis=1, keepdims=True)
+            pj = pij.sum(axis=0, keepdims=True)
+            denom = pi * pj
+            with np.errstate(divide="ignore", invalid="ignore"):
+                terms = np.where(pij > 0,
+                                 pij * np.log2(np.where(denom > 0, pij / denom, 1.0)),
+                                 0.0)
+            # Clamped: floating point can land a couple of ulps below zero, and
+            # negative information is not a thing.
+            val = float(max(0.0, terms.sum()))
+            matrix[i][j] = matrix[j][i] = val
+    return {"vars": names, "matrix": matrix}
+
+
+def _conditionals(mu) -> dict:
+    """Every single-event conditional: {"X=x": {var: {value: prob}}}.
+
+    Single events, which is what clicking one value in the readout means.
+    Precomputed rather than round-tripped: re-posting to condition would re-run
+    the optimizer and answer about a different mu than the one on screen. Size is
+    (sum of domain sizes) squared — ~400 floats for ten binary variables, not 2^n.
+    """
+    import numpy as np
+
+    names, doms, data = _joint_axes(mu)
+    out: dict[str, dict[str, dict[str, float]]] = {}
+    n = len(names)
+    for i, name in enumerate(names):
+        for ci, val in enumerate(doms[i]):
+            sl = [slice(None)] * n
+            sl[i] = ci
+            block = data[tuple(sl)]
+            mass = float(block.sum())
+            if mass <= 0:
+                continue          # conditioning on an impossible event says nothing
+            cond: dict[str, dict[str, float]] = {}
+            others = [a for a in range(n) if a != i]
+            for pos, a in enumerate(others):
+                axes = tuple(p for p in range(len(others)) if p != pos)
+                marg = block.sum(axis=axes) if axes else block
+                cond[names[a]] = {v: float(p / mass)
+                                  for v, p in zip(doms[a], np.asarray(marg).ravel())}
+            out[f"{name}={val}"] = cond
+    return out
+
+
 def _edge_scores(M: PDG, mu) -> dict[str, float]:
     import numpy as np
     from pdg.dist import z_mult, zz1_div
@@ -312,6 +441,13 @@ def api_score(req: ScoreRequest):
             "idef": float(M.IDef(mu)),
             "edge_scores": _edge_scores(M, mu),
             "marginals": _marginals(M, mu),
+            # The joint itself is never shipped: past a handful of variables it is
+            # the product of the domain sizes and would dwarf everything else on
+            # the wire. These three are derived from it here, and each is sized by
+            # the variable count rather than by the state space.
+            "atoms": _top_atoms(mu),
+            "mi": _mutual_info(mu),
+            "conditionals": _conditionals(mu),
         })
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -347,6 +483,13 @@ async def api_optimize(req: OptimizeRequest):
             "idef": float(M.IDef(mu)),
             "edge_scores": _edge_scores(M, mu),
             "marginals": _marginals(M, mu),
+            # The joint itself is never shipped: past a handful of variables it is
+            # the product of the domain sizes and would dwarf everything else on
+            # the wire. These three are derived from it here, and each is sized by
+            # the variable count rather than by the state space.
+            "atoms": _top_atoms(mu),
+            "mi": _mutual_info(mu),
+            "conditionals": _conditionals(mu),
         })
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

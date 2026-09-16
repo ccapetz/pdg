@@ -916,28 +916,7 @@ body {
 	padding-top: 0.35rem;
 }
 
-.score-marginals {
-	margin-top: 0.35rem;
-	font-family: var(--font-mono);
-	font-size: 0.7rem;
-	line-height: 1.45;
-	color: #495057;
-}
 
-.score-marginals:empty { display: none; }
-
-.marg-row {
-	display: flex;
-	gap: 0.4rem;
-	white-space: nowrap;
-}
-
-.marg-var {
-	color: #6c757d;
-	min-width: 3.2rem;
-}
-
-.marg-vals { font-weight: 600; }
 
 /* ── Example picker ─────────────────────────────────────────────────────── */
 
@@ -1002,4 +981,220 @@ body {
 
 .example-note {
 	color: #6c757d;
+}
+
+/* ── Distribution drawer ─────────────────────────────────────────────────
+   Bottom of the canvas region, full width up to the inspector rail. The joint
+   is the output of the whole pipeline and a bar needs room for a label like
+   "~ps ~s ~sh ~c", which is exactly what the 280px rail cannot give it.
+
+   When it opens, the three floating controls above it move up rather than being
+   overlapped — the same rule the toolbar and score panel already follow about
+   each other. */
+:root { --drawer-height: 15rem; }
+
+.joint-drawer {
+	position: fixed;
+	left: var(--gutter);
+	right: var(--rail-right);
+	bottom: var(--gutter);
+	height: var(--drawer-height);
+	z-index: 8;
+	display: flex;
+	flex-direction: column;
+	background: rgba(255,255,255,0.98);
+	border: 1px solid #dee2e6;
+	border-radius: 6px;
+	box-shadow: 0 -2px 14px rgba(0,0,0,0.10);
+	overflow: hidden;
+}
+
+body.drawer-open .toolbar          { bottom: calc(var(--drawer-height) + 2 * var(--gutter)); }
+body.drawer-open .validity-banner  { bottom: calc(var(--drawer-height) + 2 * var(--gutter) + 38px + 0.5rem); }
+body.drawer-open .score-panel      { bottom: calc(var(--drawer-height) + 2 * var(--gutter)); }
+
+.drawer-head {
+	display: flex;
+	align-items: baseline;
+	gap: 0.5rem;
+	padding: 0.4rem 0.7rem;
+	border-bottom: 1px solid #e9ecef;
+	background: #f8f9fa;
+}
+.drawer-title { font-size: 0.78rem; font-weight: 600; color: #343a40; }
+.drawer-source {
+	font-family: var(--font-mono);
+	font-size: 0.68rem;
+	color: #868e96;
+	flex: 1 1 auto;
+}
+.drawer-close {
+	font-family: inherit;
+	font-size: 1rem;
+	line-height: 1;
+	color: #868e96;
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0 0.2rem;
+}
+.drawer-close:hover { color: var(--pdg-ink); }
+
+.drawer-cols {
+	display: grid;
+	/* Each column has a floor below which it stops being readable — an atom label
+	   is "~ps ~s ~sh ~c" and a MI table needs a cell per variable. Below that the
+	   drawer scrolls sideways rather than crushing all three. */
+	grid-template-columns: repeat(3, minmax(230px, 1fr));
+	gap: 0.9rem;
+	padding: 0.6rem 0.7rem;
+	overflow-x: auto;
+	overflow-y: hidden;
+	flex: 1 1 auto;
+	min-height: 0;
+}
+.drawer-col { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+.drawer-col + .drawer-col { border-left: 1px solid #f1f3f5; padding-left: 0.9rem; }
+
+.drawer-col-head {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 0.4rem;
+	font-size: 0.7rem;
+	font-weight: 600;
+	color: #6c757d;
+	margin-bottom: 0.35rem;
+}
+.drawer-hint {
+	margin-top: 0.3rem;
+	font-size: 0.64rem;
+	color: #adb5bd;
+	flex: 0 0 auto;
+}
+.drawer-empty { font-size: 0.7rem; color: #adb5bd; font-style: italic; }
+
+.cond-clear {
+	font-family: inherit;
+	font-size: 0.64rem;
+	font-weight: 500;
+	color: var(--pdg-select);
+	background: none;
+	border: none;
+	cursor: pointer;
+	padding: 0;
+	text-decoration: underline;
+}
+
+/* Marginals: one row per variable, one chip per value. The chip carries its own
+   probability as a fill, so magnitude and number occupy the same space. */
+.drawer-marginals { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.marg-line {
+	display: flex;
+	align-items: center;
+	gap: 0.3rem;
+	margin-bottom: 0.25rem;
+	flex-wrap: wrap;
+}
+.marg-name {
+	font-family: var(--font-math);
+	font-style: italic;
+	font-size: 0.8rem;
+	color: var(--pdg-ink);
+	min-width: 2.2rem;
+}
+.marg-chip {
+	position: relative;
+	font-family: inherit;
+	font-size: 0.68rem;
+	padding: 0.18rem 0.4rem;
+	border: 1px solid #dee2e6;
+	border-radius: 4px;
+	background:
+		linear-gradient(to right, var(--pdg-lavender) var(--fill, 0%), #fff var(--fill, 0%));
+	color: var(--pdg-ink);
+	cursor: pointer;
+	display: inline-flex;
+	gap: 0.3rem;
+	align-items: baseline;
+}
+.marg-chip:hover:not(:disabled) { border-color: var(--pdg-select); }
+.marg-chip.active {
+	border-color: var(--pdg-select);
+	box-shadow: 0 0 0 1px var(--pdg-select);
+	font-weight: 600;
+}
+.marg-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.chip-val { font-family: var(--font-mono); }
+.chip-p   { font-family: var(--font-mono); color: #6c757d; }
+
+/* Atoms: sorted bars. Scaled to the largest atom, so the comparison is between
+   worlds rather than against a 1.0 nothing ever reaches. */
+.drawer-atoms { overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.atom-row {
+	display: grid;
+	grid-template-columns: minmax(0, auto) 1fr 3rem;
+	align-items: center;
+	gap: 0.45rem;
+	font-size: 0.66rem;
+	margin-bottom: 0.15rem;
+}
+.atom-label {
+	font-family: var(--font-mono);
+	color: #495057;
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+.atom-track { background: #f1f3f5; border-radius: 2px; height: 8px; overflow: hidden; }
+.atom-bar   { display: block; height: 100%; background: var(--pdg-select); opacity: 0.75; }
+.atom-p     { font-family: var(--font-mono); color: #6c757d; text-align: right; }
+.atom-tail {
+	margin-top: 0.3rem;
+	font-size: 0.64rem;
+	font-style: italic;
+	color: #adb5bd;
+}
+
+/* MI: grey->red, the same ramp the arcs use, for the same reason — a magnitude
+   whose zero means "nothing here". */
+.drawer-mi { overflow: auto; flex: 1 1 auto; min-height: 0; }
+.mi-table { border-collapse: collapse; font-size: 0.64rem; }
+.mi-table th {
+	font-family: var(--font-math);
+	font-style: italic;
+	font-weight: 400;
+	color: #6c757d;
+	padding: 0.15rem 0.3rem;
+	text-align: center;
+}
+.mi-cell {
+	font-family: var(--font-mono);
+	text-align: center;
+	padding: 0.2rem 0.35rem;
+	border: 1px solid #f1f3f5;
+	color: var(--pdg-ink);
+	background: color-mix(in oklab, var(--pdg-red) calc(var(--t) * 100%), #f8f9fa);
+}
+.mi-diag { background: #f8f9fa; border: 1px solid #f1f3f5; }
+
+.drawer-toggle {
+	font-family: inherit;
+	font-size: 0.68rem;
+	color: var(--pdg-select);
+	background: none;
+	border: none;
+	padding: 0.2rem 0;
+	cursor: pointer;
+	text-align: left;
+}
+.drawer-toggle:hover { text-decoration: underline; }
+
+/* The toolbar sits bottom-left and the score panel bottom-right of the canvas
+   region; with the drawer open they share a row, which only collides once the
+   window is too narrow for both. Lift the score panel over the toolbar there. */
+@media (max-width: 1000px) {
+	body.drawer-open .score-panel {
+		bottom: calc(var(--drawer-height) + 2 * var(--gutter) + 3.5rem);
+	}
 }

@@ -195,6 +195,47 @@ MODELS["c8-modeled-bias"] = model(
 # dissertation. These are the counts check_examples.py verifies against, so the
 # number the UI shows is the number the harness asserts.
 
+# ── C2a — the tanning bed (Ch 3, Example 3.2, p. 56) ──────────────────────────
+# Take the smoking BN and add a second cause of cancer. Ex 3.2's point is that a
+# BN cannot absorb T without REWRITING p4 over {S, SH, T}, whereas a PDG just
+# gains an arc — and the price of gaining it is that C now has two opinions about
+# it, which is a genuine inconsistency rather than a modelling error.
+#
+# The numbers are ours, not the dissertation's: the text gives the structure and
+# the argument, not a table. They are chosen so the disagreement is visible but
+# not absurd — tanning raises cancer risk on its own, and t4 is the study that
+# only ever looked at smoking.
+MODELS["c2a-tanning-bed"] = model(
+    nodes=["PS", "S", "SH", "T", "C"],
+    hedges={
+        "p1": [[], ["PS"]],
+        "p2": [["PS"], ["S"]],
+        "p3": [["PS"], ["SH"]],
+        "p4": [["S", "SH"], ["C"]],
+        "t1": [[], ["T"]],
+        "t4": [["T"], ["C"]],
+    },
+    cpds={
+        "p1": {"\u22c6": {"ps": 0.3, "~ps": 0.7}},
+        "p2": {"ps": {"s": 0.4, "~s": 0.6},
+               "~ps": {"s": 0.2, "~s": 0.8}},
+        "p3": {"ps": {"sh": 0.8, "~sh": 0.2},
+               "~ps": {"sh": 0.3, "~sh": 0.7}},
+        "p4": {"s, sh": {"c": 0.6, "~c": 0.4},
+               "s, ~sh": {"c": 0.4, "~c": 0.6},
+               "~s, sh": {"c": 0.1, "~c": 0.9},
+               "~s, ~sh": {"c": 0.01, "~c": 0.99}},
+        "t1": {"\u22c6": {"t": 0.25, "~t": 0.75}},
+        "t4": {"t": {"c": 0.35, "~c": 0.65},
+               "~t": {"c": 0.05, "~c": 0.95}},
+    },
+    positions={"PS": (330, 130), "S": (180, 340), "SH": (480, 340),
+               "T": (740, 340), "C": (400, 560)},
+    linkpositions={"p1": (330, 60), "p2": (240, 235), "p3": (420, 235),
+                   "p4": (330, 460), "t1": (740, 250), "t4": (600, 470)},
+)
+
+
 META: dict[str, dict] = {
     "smoking-cpd": dict(
         title="Smoking (BN as PDG)", source="Ex 3.2, p. 56", tier="Baseline",
@@ -242,6 +283,13 @@ META: dict[str, dict] = {
              ".700 where the previous example drifts to .842. Score still reads .845 "
              "for both — factor_product weights by β only — but its IDef separates "
              "them (0 here, .62 there). The diff is one pair of numbers.",
+        gamma=1.0, epsilon=0.0, iters=800),
+    "c2a-tanning-bed": dict(
+        title="Tanning bed (BN + one arc)", source="Ex 3.2, p. 56", tier="Tier 1",
+        note="The smoking BN plus a second cause of cancer. A BN would have to "
+             "rewrite p4 over {S, SH, T}; the PDG just gains an arc — and C now "
+             "has two opinions, so Inc leaves zero. Five variables, 32 worlds: the "
+             "distribution drawer is the point.",
         gamma=1.0, epsilon=0.0, iters=800),
     "c8-modeled-bias": dict(
         title="Coin with a modeled bias", source="Ex 4.1, pp. 121–122", tier="Tier 1",

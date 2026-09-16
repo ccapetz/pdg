@@ -143,13 +143,51 @@
 			<div id="score-readout" class="score-readout" style="display:none">
 				<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
 				<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
-				<div id="score-marginals" class="score-marginals"></div>
+				<!-- The marginals used to live here. They are a projection OF the joint,
+				     and they moved to the distribution drawer along with everything else
+				     the joint has to say; this panel keeps the inputs and the two scalars
+				     they govern. -->
+				<button type="button" id="drawer-toggle" class="drawer-toggle" hidden>
+					Distribution &#9652;
+				</button>
 				<!-- Arcs left out of the score because their cpd is not finished. Named,
 				     not just counted: a number computed over fewer arcs than are on
 				     screen is otherwise indistinguishable from one over all of them. -->
 				<div id="score-skipped" class="score-skipped"></div>
 			</div>
 		</div>
+
+		<!-- The joint is the output of the whole pipeline, so it gets width rather
+		     than a slot in the 280px rail: a bar needs room for a label like
+		     "~ps, ~s, ~sh, ~c". Three columns, because they answer three different
+		     questions — what one variable does, what the most likely worlds are, and
+		     what the joint knows that the marginals throw away. -->
+		<section id="joint-drawer" class="joint-drawer" hidden aria-label="Distribution">
+			<header class="drawer-head">
+				<span class="drawer-title">Distribution</span>
+				<span id="drawer-source" class="drawer-source"></span>
+				<button type="button" id="drawer-close" class="drawer-close" aria-label="Close">&times;</button>
+			</header>
+			<div class="drawer-cols">
+				<div class="drawer-col">
+					<div class="drawer-col-head">
+						<span id="marg-title">Marginals</span>
+						<button type="button" id="cond-clear" class="cond-clear" hidden>clear</button>
+					</div>
+					<div id="drawer-marginals" class="drawer-marginals"></div>
+					<div class="drawer-hint">click a value to condition on it</div>
+				</div>
+				<div class="drawer-col">
+					<div class="drawer-col-head"><span id="atoms-title">Most likely worlds</span></div>
+					<div id="drawer-atoms" class="drawer-atoms"></div>
+				</div>
+				<div class="drawer-col">
+					<div class="drawer-col-head"><span>Mutual information</span></div>
+					<div id="drawer-mi" class="drawer-mi"></div>
+					<div class="drawer-hint">bits &middot; what the marginals lose</div>
+				</div>
+			</div>
+		</section>
 
 		<canvas id="canvas" width="100%" height="100%" class="fullsize z1"></canvas>
 		<svg id="svg" width="100%" height="100%" class="fullsize z2 ghost"></svg>

@@ -7,4 +7,16 @@ __pycache__
 # view and would otherwise show up dirty in every diff.
 .DS_Store
 .obsidian/
-.claude/settings.local.json
+
+# Agent / editor config and notes: local working context, not part of the model
+# or the viz. .claude/launch.json is the one genuinely shareable thing in here
+# (it tells the preview launcher how to start viz/server.py) — reinstate that one
+# line if a collaborator ever needs it.
+.claude/
+CLAUDE.md
+
+# The dissertation PDF is Oliver Richardson's, not ours to redistribute from a
+# public fork — and at 8.1 MB it was two thirds of everything tracked. Kept
+# locally; dissertation/*.md carries the citations that point into it
+# (printed p. N = PDF p. N+14).
+oli-dissertation.pdf

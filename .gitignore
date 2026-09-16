@@ -31,3 +31,11 @@ CLAUDE.md
 oli-dissertation.pdf
 dissertation/
 eleusis/
+
+# Research directions under active development — vetted before shared, not before
+# written. comparator/ (the inference/inconsistency comparator design),
+# pdg-history/ and research-directions/ are all work in progress that belongs in
+# this fork's tree only once it stands up to scrutiny.
+comparator/
+pdg-history/
+research-directions/

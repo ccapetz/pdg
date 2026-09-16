@@ -87,6 +87,12 @@ function PDGView(hypergraph, mousept) {
 	// 	"<MOUSE>" : { x : 0, y : 0, w : 0, h : 0}
 	// };
 	let parentLinks = [];
+	// One notification for "the model changed shape", fired by every mutator. The
+	// alternative — each call site in pdgviz.js remembering to tell the UI — was
+	// tried first and immediately missed the drag path, so an arc drawn by dragging
+	// did not raise the validity banner while one drawn by clicking did. A hook here
+	// cannot be forgotten by a new call site the way a sprinkled call can.
+	let on_model_change = () => {};
 	let repaint = () => undefined
 	
 	// let sim_mode = "linknodes only";  // can also be "all"
@@ -200,6 +206,7 @@ function PDGView(hypergraph, mousept) {
 			}
 		}
 		infer_domains();
+		on_model_change();
 
 		// Per-arc confidences. These have to survive the browser round-trip: the UI
 		// posts `pdg.state` (i.e. current_hypergraph()) to /api/score and
@@ -810,7 +817,7 @@ context.globalAlpha = 0.5;
 		simulation.force("bipartite").links(mk_bipartite_links(linknodes));
 
 		simulation.alpha(0.7).restart();
-		
+		on_model_change();
 		return lobj;
 	}
 	// The JS half of server.py's _infer_domains: a variable's real domain is
@@ -866,6 +873,105 @@ context.globalAlpha = 0.5;
 		return cpd;
 	}
 
+	// ── Domains as editable data ──────────────────────────────────────────────
+	// A variable's domain is spelled out in the cpd keys of every arc that touches
+	// it, so editing it is never a one-object change: renaming a state has to
+	// rewrite that state everywhere it appears as a column (arcs INTO the variable)
+	// or as one position of a comma-joined row key (arcs OUT of it).
+	function why_not_value(name, node, current) {
+		const v = String(name == null ? "" : name).trim();
+		if(!v) return "a value needs a name";
+		if(v === current) return null;
+		if(v.includes(",")) return "no commas \u2014 they separate a row's sources";
+		if((node.values || []).includes(v)) return `${node.id} already has a value ${v}`;
+		return null;
+	}
+
+	// Rebuild an arc's cpd against the CURRENT domains, keeping every cell whose
+	// row and column both still exist. That is the whole preservation rule: a value
+	// that still has a home keeps it, a state that went away takes its cells with
+	// it, and a state that arrived brings blanks. Returns true if the shape moved,
+	// so the inspector can say so rather than letting cells appear silently.
+	function reshape_cpd(l) {
+		const states = n => (lookup[n] && lookup[n].values && lookup[n].values.length)
+			? lookup[n].values : default_domain(n);
+		const fresh = {};
+		const cols = domain_product(l.tgts, states);
+		let moved = false;
+		for(const row of domain_product(l.srcs, states)) {
+			fresh[row] = {};
+			for(const col of cols) {
+				const had = l.cpd && l.cpd[row] && l.cpd[row][col] !== undefined;
+				fresh[row][col] = had ? l.cpd[row][col] : null;
+				if(!had) moved = true;
+			}
+		}
+		if(l.cpd) {
+			for(const row of Object.keys(l.cpd))
+				for(const col of Object.keys(l.cpd[row]))
+					if(!fresh[row] || fresh[row][col] === undefined) moved = true;   // dropped
+		}
+		l.cpd = fresh;
+		return moved;
+	}
+
+	function arcs_touching(nid) {
+		return links.filter(l => l.srcs.includes(nid) || l.tgts.includes(nid));
+	}
+
+	// Renaming a state is pure relabelling: no cell is created or destroyed, so it
+	// is done by rewriting keys in place rather than by reshaping, which would
+	// blank every cell the old name indexed.
+	function rename_value(nid, old_val, new_val) {
+		const n = lookup[nid];
+		if(!n) return false;
+		const refusal = why_not_value(new_val, n, old_val);
+		if(refusal) { console.warn("value rename refused: " + refusal); return false; }
+		if(new_val === old_val) return true;
+
+		for(const l of arcs_touching(nid)) {
+			if(!l.cpd) continue;
+			const tgt_i = l.tgts.indexOf(nid), src_i = l.srcs.indexOf(nid);
+			const next = {};
+			for(const [row, cells] of Object.entries(l.cpd)) {
+				let key = row;
+				if(src_i >= 0) {
+					const parts = row.split(",").map(p => p.trim());
+					if(parts[src_i] === old_val) parts[src_i] = new_val;
+					key = parts.join(", ");
+				}
+				next[key] = {};
+				for(const [col, v] of Object.entries(cells))
+					next[key][tgt_i >= 0 && col === old_val ? new_val : col] = v;
+			}
+			l.cpd = next;
+		}
+		n.values = n.values.map(v => v === old_val ? new_val : v);
+		on_model_change();
+		return true;
+	}
+
+	// Adding or removing a state changes the SHAPE of every cpd that mentions the
+	// variable. Arcs whose cpd moved are flagged so the inspector can explain where
+	// the blanks came from; the flag clears itself once the cpd is a distribution
+	// again (see cpd_settled).
+	function set_values(nid, values) {
+		const n = lookup[nid];
+		if(!n) return [];
+		n.values = [...values];
+		const moved = [];
+		for(const l of arcs_touching(nid)) {
+			if(reshape_cpd(l)) {
+				l.domain_note = nid;
+				moved.push(l.label);
+			}
+		}
+		on_model_change();
+		return moved;
+	}
+
+	function cpd_settled(l) { delete l.domain_note; }
+
 	function new_node(vname, x,y) {
 		let ob = {
 			id: vname, values: default_domain(vname),
@@ -874,6 +980,7 @@ context.globalAlpha = 0.5;
 		nodes.push(ob);
 		lookup[vname] = ob;
 		align_node_dom();
+		on_model_change();
 		return ob;
 	}
 	function align_node_dom() {
@@ -1294,6 +1401,7 @@ context.globalAlpha = 0.5;
 		restyle_links();
 		update_simulation();
 		ontick();
+		on_model_change();
 		return true;
 	}
 	function delete_selection() {		
@@ -1303,6 +1411,7 @@ context.globalAlpha = 0.5;
 		links_to_remove = links.filter( l => l.selected);
 		links_to_remove.map(remove_link);
 		align_node_dom();
+		on_model_change();
 	}
 	function select_all() {
 		let all_selected = true;
@@ -1338,6 +1447,13 @@ context.globalAlpha = 0.5;
 		handle: handle,
 		new_node : new_node,
 		cpd_skeleton : cpd_skeleton,
+		notify_change_via : fn => { on_model_change = fn; },
+		rename_value : rename_value,
+		set_values : set_values,
+		why_not_value : why_not_value,
+		cpd_settled : cpd_settled,
+		default_domain : default_domain,
+		domain_product : domain_product,
 		new_link : new_link,
 		// Exported because they are this view's naming authority — they scan its own
 		// `nodes` / `links` for collisions, so a caller cannot reimplement them.

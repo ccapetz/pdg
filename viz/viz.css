@@ -5,6 +5,114 @@
 	/* background-color: #A3A; */
 }
 
+/* ── Validity banner ─────────────────────────────────────────────────────
+   Bottom left, directly above the toolbar, and only present when something is
+   wrong. Amber rather than red: --pdg-red means "worse fit" on the canvas, and
+   an unfinished cpd is not a bad score, it is an absent one. Chrome-coloured so
+   it cannot be mistaken for part of the picture. */
+.validity-banner {
+	position: fixed;
+	bottom: calc(var(--gutter) + 38px + 0.5rem);   /* toolbar height + breathing room */
+	left: var(--gutter);
+	z-index: 10;
+	display: flex;
+	align-items: center;
+	gap: 0.4rem;
+	max-width: calc(100vw - 2 * var(--gutter));
+	font-family: inherit;
+	font-size: 0.75rem;
+	padding: 0.35rem 0.6rem;
+	text-align: left;
+	color: #8a5a00;
+	background: #fff8e6;
+	border: 1px solid #e8c56a;
+	border-radius: 6px;
+	box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+	cursor: pointer;
+	transition: background-color 0.12s, border-color 0.12s;
+}
+.validity-banner:hover { background: #fdf0cf; border-color: #d9ad45; }
+.validity-banner:focus-visible {
+	outline: none;
+	box-shadow: 0 0 0 2px rgba(138, 90, 0, 0.25);
+}
+.validity-mark { font-size: 0.85rem; line-height: 1; }
+.validity-hint {
+	color: #b08a3c;
+	font-size: 0.68rem;
+	border-left: 1px solid #e8c56a;
+	padding-left: 0.4rem;
+}
+
+/* ── Domain editor ───────────────────────────────────────────────────────
+   One field per value: the number of fields is the domain size, which is the
+   thing being edited. */
+.value-row {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 0.3rem;
+	align-items: center;
+}
+.value-cell {
+	display: inline-flex;
+	align-items: stretch;
+	border: 1px solid #ced4da;
+	border-radius: 4px;
+	overflow: hidden;
+	background: #fff;
+}
+.value-cell:focus-within { border-color: var(--pdg-select); }
+
+.value-input {
+	font-family: var(--font-mono);
+	font-size: 0.75rem;
+	min-width: 2.5rem;
+	max-width: 7rem;
+	padding: 0.2rem 0.3rem;
+	border: none;
+	background: transparent;
+	color: var(--pdg-ink);
+}
+.value-input:focus { outline: none; }
+
+.value-del, .value-add {
+	font-family: inherit;
+	font-size: 0.75rem;
+	line-height: 1;
+	padding: 0.2rem 0.35rem;
+	color: #868e96;
+	background: #f8f9fa;
+	border: none;
+	cursor: pointer;
+}
+.value-del:hover:not(:disabled) { background: #f1d5d0; color: var(--pdg-red); }
+.value-del:disabled { color: #dee2e6; cursor: not-allowed; }
+
+.value-add {
+	border: 1px dashed #ced4da;
+	border-radius: 4px;
+	padding: 0.25rem 0.45rem;
+}
+.value-add:hover { background: #eceef0; color: var(--pdg-select); border-color: var(--pdg-select); }
+
+.value-count {
+	display: block;
+	margin-top: 0.25rem;
+	font-size: 0.68rem;
+	color: #adb5bd;
+}
+
+/* The cpd note, when it is explaining a domain change rather than reporting an
+   autofill, is a thing to act on — so it carries the same amber as the banner. */
+.cpd-note-domain {
+	color: #8a5a00;
+	background: #fff8e6;
+	border: 1px solid #f0dcae;
+	border-radius: 4px;
+	padding: 0.3rem 0.4rem;
+	line-height: 1.35;
+}
+
 /* ── Toolbar ─────────────────────────────────────────────────────────────
    Bottom-LEFT. The right rail is spoken for twice over — the inspector column
    plus the score panel stacked against it — and putting the modes and the file
@@ -721,7 +829,13 @@ body {
    above ~965px. Below that, stack the panel above the toolbar the way it used to
    sit above the old bottom-right one. */
 @media (max-width: 1000px) {
-	.score-panel { bottom: 4.5rem; }
+	/* Clears the toolbar, and the validity banner above it when one is showing.
+	   Below this width the panel's left edge and the banner's right edge overlap
+	   horizontally, so the only way past each other is vertical. */
+	.score-panel { bottom: 7.5rem; }
+	/* The hint is the first thing to go when space is tight: the warning triangle
+	   and the count still say everything load-bearing. */
+	.validity-hint { display: none; }
 }
 
 .score-row {

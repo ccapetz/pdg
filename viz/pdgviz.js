@@ -263,17 +263,39 @@ function showEdgeInspector(link, onEdit, view) {
 	// it did afterwards — "3 rows filled" vs "1 row resampled" are different
 	// events and the second one overwrote numbers, so it should not pass silently.
 	const noteEl = panel.querySelector('.cpd-note');
-	const fillBtn = document.getElementById('cpd-autofill');
+
+	// Rebind first, then only ever touch the button through a fresh lookup. An
+	// earlier version captured the element, called refreshFill(), and only then
+	// swapped in the clone — so every later call updated a node that had already
+	// been detached from the document, and the button silently failed to come back
+	// when an edit re-opened a gap. Look it up each time instead of holding a
+	// reference that a later replaceWith can invalidate.
+	const staleBtn = document.getElementById('cpd-autofill');
+	const fillBtn = staleBtn.cloneNode(true);   // drops listeners bound to a prior arc
+	staleBtn.replaceWith(fillBtn);
+
 	const refreshFill = () => {
-		const gaps = cpdIncompleteRows(link.cpd).length;
-		fillBtn.hidden = !gaps;
-		fillBtn.textContent = gaps ? `Autofill ${gaps} row${gaps > 1 ? 's' : ''}` : 'Autofill';
+		const btn = document.getElementById('cpd-autofill');
+		const n = cpdIncompleteRows(link.cpd).length;
+		btn.hidden = !n;
+		btn.textContent = n ? `Autofill ${n} row${n > 1 ? 's' : ''}` : 'Autofill';
 	};
-	noteEl.textContent = '';
+	// Where the blanks came from. A cpd that changed shape because a variable
+	// gained or lost a value looks identical to one that was never filled in, and
+	// the two call for different reactions — so say which one this is, until the
+	// table is a distribution again.
+	const gaps = cpdIncompleteRows(link.cpd).length;
+	if (link.domain_note && gaps) {
+		noteEl.textContent = `${link.domain_note}'s values changed \u2014 ` +
+			`${gaps} row${gaps > 1 ? 's' : ''} need values. Cells that still had a home kept theirs.`;
+		noteEl.classList.add('cpd-note-domain');
+	} else {
+		if (link.domain_note && view) view.cpd_settled(link);
+		noteEl.textContent = '';
+		noteEl.classList.remove('cpd-note-domain');
+	}
 	refreshFill();
-	const freshBtn = fillBtn.cloneNode(true);   // drop listeners bound to a prior arc
-	fillBtn.replaceWith(freshBtn);
-	freshBtn.addEventListener('click', () => {
+	fillBtn.addEventListener('click', () => {
 		const { filled, resampled } = autofillCpd(link.cpd);
 		showEdgeInspector(link, onEdit, view);
 		const said = [];
@@ -281,6 +303,7 @@ function showEdgeInspector(link, onEdit, view) {
 		if (resampled) said.push(`${resampled} row${resampled > 1 ? 's' : ''} resampled whole`);
 		panel.querySelector('.cpd-note').textContent =
 			said.length ? said.join(', ') + ' \u2014 Dirichlet(1)' : '';
+		onCpdChanged();
 		if (onEdit) onEdit();
 	});
 
@@ -302,6 +325,13 @@ function showEdgeInspector(link, onEdit, view) {
 				}
 				const row = input.closest('tr');
 				row.classList.toggle('cpd-row-invalid', rowIncomplete(link.cpd, combo));
+				// Re-offer Autofill the moment an edit opens a gap. This costs one pass
+				// over the cells of a single cpd, on commit (change, not keystroke), so
+				// it is nowhere near expensive enough to be worth batching: clearing a
+				// cell and having to reselect the arc to get the button back is a far
+				// higher price than counting a few dozen numbers.
+				refreshFill();
+				onCpdChanged();
 			});
 		});
 	}
@@ -382,6 +412,137 @@ function buildArcChip(link, colorOf, onPick) {
 	return chip;
 }
 
+// The domain editor. One field per value, because the number of fields IS the
+// domain size — the thing being edited — and a comma-separated string would hide
+// that behind punctuation. Editing a field renames that state everywhere it
+// appears; x removes it; + adds one.
+//
+// Every edit reshapes the cpds of every arc touching this variable, preserving
+// each cell whose row and column both survive. Adding a state therefore leaves
+// blanks rather than redistributing anyone's numbers, which is the only choice
+// that does not silently invent probabilities.
+function buildValuesEditor(host, node, pdg, onPick) {
+	host.innerHTML = '';
+	const values = node.values && node.values.length ? node.values : pdg.default_domain(node.id);
+
+	const refusalEl = document.createElement('div');
+	refusalEl.className = 'rename-refusal';
+
+	const reshow = () => showNodeInspector(node, pdg, onPick);
+
+	const row = document.createElement('div');
+	row.className = 'value-row';
+	values.forEach((v, i) => {
+		const cell = document.createElement('span');
+		cell.className = 'value-cell';
+
+		const input = document.createElement('input');
+		input.type = 'text';
+		input.className = 'value-input';
+		input.value = v;
+		input.size = Math.max(3, String(v).length);
+		input.setAttribute('aria-label', `value ${i + 1} of ${node.id}`);
+		input.addEventListener('keydown', e => {
+			e.stopPropagation();                       // canvas shortcuts are single letters
+			if (e.key === 'Enter') input.blur();
+			if (e.key === 'Escape') { input.value = v; input.blur(); }
+		});
+		input.addEventListener('change', () => {
+			const next = input.value.trim();
+			if (next === v) return;
+			const refusal = pdg.why_not_value(next, node, v);
+			if (refusal) { refusalEl.textContent = refusal; input.value = v; return; }
+			pdg.rename_value(node.id, v, next);
+			pdg.tick();
+			onCpdChanged();
+			reshow();
+		});
+
+		const del = document.createElement('button');
+		del.type = 'button';
+		del.className = 'value-del';
+		del.textContent = '\u00d7';
+		// A variable with one value is not a variable. Below two there is nothing
+		// left for a cpd to be a distribution over.
+		del.disabled = values.length <= 2;
+		del.title = del.disabled
+			? 'a variable needs at least two values'
+			: `remove ${v} \u2014 its cells go with it`;
+		del.addEventListener('click', () => {
+			pdg.set_values(node.id, values.filter(x => x !== v));
+			pdg.tick();
+			onCpdChanged();
+			reshow();
+		});
+
+		cell.append(input, del);
+		row.appendChild(cell);
+	});
+
+	const add = document.createElement('button');
+	add.type = 'button';
+	add.className = 'value-add';
+	add.textContent = '+';
+	add.title = 'add a value — new cells start blank';
+	add.addEventListener('click', () => {
+		let i = values.length + 1, name = `v${i}`;
+		while (values.includes(name)) name = `v${++i}`;
+		pdg.set_values(node.id, [...values, name]);
+		pdg.tick();
+		onCpdChanged();
+		reshow();
+	});
+	row.appendChild(add);
+
+	const count = document.createElement('span');
+	count.className = 'value-count';
+	count.textContent = `${values.length} values`;
+
+	host.append(row, count, refusalEl);
+}
+
+// Assigned once the view exists; the inspector calls it after any edit that can
+// change whether the model is valid.
+let onCpdChanged = () => {};
+
+// What is wrong with the model right now, as two lists. An arc is at fault when
+// it has no cpd, when a row is unfinished, or when its cpd is keyed by states
+// that are not in the variables' domains — the last one catches a hand-written
+// file whose two arcs disagree about what values a variable has, which
+// infer_domains resolves first-writer-wins and would otherwise hide.
+//
+// A node is at fault when its domain is not usable: blank or repeated values, or
+// fewer than two of them.
+function modelFaults(pdg) {
+	const arcs = [];
+	for (const l of pdg.links) {
+		if (!l.cpd) { arcs.push({ l, why: 'no CPD' }); continue; }
+		const states = n => (pdg.lookup[n] && pdg.lookup[n].values && pdg.lookup[n].values.length)
+			? pdg.lookup[n].values : pdg.default_domain(n);
+		const rows = Object.keys(l.cpd);
+		const wantRows = pdg.domain_product(l.srcs, states);
+		const wantCols = pdg.domain_product(l.tgts, states);
+		const haveCols = rows.length ? Object.keys(l.cpd[rows[0]]) : [];
+		const shapeOff = rows.length !== wantRows.length
+			|| wantRows.some(r => !(r in l.cpd))
+			|| haveCols.length !== wantCols.length
+			|| wantCols.some(c => !haveCols.includes(c));
+		if (shapeOff) { arcs.push({ l, why: "CPD does not match the variables' values" }); continue; }
+		const gaps = cpdIncompleteRows(l.cpd).length;
+		if (gaps) arcs.push({ l, why: `${gaps} row${gaps > 1 ? 's' : ''} unfinished` });
+	}
+
+	const nodes = [];
+	for (const n of pdg.nodes) {
+		if (!n.display) continue;                       // multinodes are not variables
+		const vals = n.values || [];
+		if (vals.length < 2) nodes.push({ n, why: 'fewer than two values' });
+		else if (vals.some(v => !String(v).trim())) nodes.push({ n, why: 'a value is blank' });
+		else if (new Set(vals).size !== vals.length) nodes.push({ n, why: 'repeated values' });
+	}
+	return { arcs, nodes };
+}
+
 function showNodeInspector(node, pdg, onPick) {
 	const panel = document.getElementById('inspector');
 	panel.querySelector('.inspector-empty').style.display = 'none';
@@ -400,10 +561,7 @@ function showNodeInspector(node, pdg, onPick) {
 			pdg.tick();
 		});
 
-	const states = nodeStates(node.id, pdg.links);
-	const valEl = panel.querySelector('.node-values');
-	if (states) valEl.textContent = states.join(', ');
-	else valEl.innerHTML = '<span class="node-values-unknown">not determined by any cpd</span>';
+	buildValuesEditor(panel.querySelector('.node-values'), node, pdg, onPick);
 
 	const incoming = pdg.links.filter(l => l.tgts.includes(node.id));
 	const outgoing = pdg.links.filter(l => l.srcs.includes(node.id));
@@ -481,6 +639,7 @@ $(function() {
 
 	function initPDG(hypergraph) {
 		pdg = PDGView(hypergraph, mouse);
+		pdg.notify_change_via(refreshValidityBanner);
 		pdgs = [pdg];
 		pdg.repaint_via(redraw);
 		hideScoreReadout();
@@ -635,6 +794,53 @@ $(function() {
 	$('#load-button').click(function(e){
 		$('#fileupload').click();
 	})
+	// ── Validity banner ──────────────────────────────────────────────────────
+	// Recomputed after anything that can break or fix the model. It walks every arc
+	// and node, which is cheap enough to do on every edit at these sizes; if a PDG
+	// ever gets big enough for that to show, the fix is to recompute the one element
+	// that changed, not to update less often — a stale "all clear" is worse than no
+	// banner.
+	let faultCursor = 0;
+
+	function refreshValidityBanner() {
+		const { arcs, nodes } = modelFaults(pdg);
+		const banner = document.getElementById('validity-banner');
+		const total = arcs.length + nodes.length;
+		banner.hidden = !total;
+		if (!total) { faultCursor = 0; return; }
+		const parts = [];
+		if (arcs.length)  parts.push(`${arcs.length} arc${arcs.length > 1 ? 's' : ''}`);
+		if (nodes.length) parts.push(`${nodes.length} variable${nodes.length > 1 ? 's' : ''}`);
+		// Counted, not listed: at "8 variables, 3 arcs" a list in the corner is a wall
+		// of text you cannot act on, and the inspector explains each case in place.
+		document.getElementById('validity-text').textContent =
+			parts.join(', ') + (total === 1 ? ' needs attention' : ' need attention');
+	}
+	onCpdChanged = refreshValidityBanner;
+
+	// Step through the faults rather than dumping them: each click selects the next
+	// offender on the canvas and opens it, so the banner is a way to walk the list.
+	$('#validity-banner').click(function() {
+		const { arcs, nodes } = modelFaults(pdg);
+		const all = [...arcs.map(a => ({ kind: 'arc', ...a })),
+		             ...nodes.map(n => ({ kind: 'node', ...n }))];
+		if (!all.length) return;
+		const pick = all[faultCursor % all.length];
+		faultCursor++;
+		pdg.links.forEach(l => { l.selected = false; });
+		pdg.nodes.forEach(n => { n.selected = false; });
+		if (pick.kind === 'arc') {
+			pick.l.selected = true;
+			showEdgeInspector(pick.l, redraw, pdg);
+		} else {
+			pick.n.selected = true;
+			inspectNode(pick.n);
+		}
+		pdg.restyle_nodes();
+		pdg.restyle_links();
+		redraw();
+	});
+
 	// Selecting an arc from the node view has to do on the canvas what clicking it
 	// would have done — otherwise the panel shows one arc while a different one is
 	// highlighted in the picture.
@@ -1106,7 +1312,7 @@ $(function() {
 				// source_link : event.subject.link
 			});
 			temp_link = null;
-
+	
 		} else if(action.type == 'move') {
 			// mouse_end = vec2(lookup['<MOUSE>']);
 			mouse_end = vec2(mouse);

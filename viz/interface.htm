@@ -25,6 +25,19 @@
 		     inspector column and the score panel. These are chrome (modes, actions,
 		     file) and are styled as one panel in the same idiom as the help and
 		     example panels rather than as raw Bootstrap buttons. -->
+		<!-- Sits directly above the toolbar, bottom left. A BUTTON, not a readout:
+		     the useful thing is not knowing that three arcs are unfinished, it is
+		     getting to them, so clicking steps through the faulty elements one at a
+		     time and opens each in the inspector. Deliberately not floating labels on
+		     the canvas — hue, width and opacity there already mean inconsistency, beta
+		     and alpha, and a fourth channel for validity would collide with the first
+		     one in exactly the colour it uses. -->
+		<button id="validity-banner" class="validity-banner" hidden>
+			<span class="validity-mark" aria-hidden="true">&#9888;</span>
+			<span id="validity-text"></span>
+			<span class="validity-hint">click to inspect</span>
+		</button>
+
 		<div class="toolbar" role="toolbar" aria-label="Editor tools">
 			<div id="drag-mode-toolbar" class="tool-group" role="group" aria-label="Drag action">
 				<button data-mode="move" type="button" class="tool-btn active">Manipulate</button>

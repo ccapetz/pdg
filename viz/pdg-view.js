@@ -206,6 +206,22 @@ function PDGView(hypergraph, mousept) {
 			}
 		}
 		infer_domains();
+
+		// An arc that arrives without a cpd (every Tier 0 file, and anything drawn
+		// and saved before it was filled in) gets the same blank, correctly shaped
+		// table a freshly drawn arc does. Before this, the only thing that built one
+		// was reshape_cpd, as a side effect of editing a variable's domain — so a
+		// loaded cpd-less arc showed "No CPD loaded", raised no warning, and only
+		// became editable once you had changed an unrelated value. Must run after
+		// infer_domains, because the skeleton's rows and columns are the domains.
+		//
+		// Existing cpds are deliberately NOT reshaped here, even ones whose keys do
+		// not match the domains: that would silently drop cells from a file the user
+		// wrote. modelFaults flags the mismatch instead and leaves the decision to
+		// them.
+		for(const l of links)
+			if(!l.cpd) l.cpd = cpd_skeleton(l.srcs, l.tgts);
+
 		on_model_change();
 
 		// Per-arc confidences. These have to survive the browser round-trip: the UI

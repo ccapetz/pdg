@@ -640,6 +640,12 @@ $(function() {
 	function initPDG(hypergraph) {
 		pdg = PDGView(hypergraph, mouse);
 		pdg.notify_change_via(refreshValidityBanner);
+		// PDGView's constructor calls load(), which fires on_model_change() while it
+		// is still the no-op default — the hook is only registered on the line above.
+		// So the FIRST model rendered never reported its faults; every later load did.
+		// Invisible while the startup model was the valid smoking BN, and wrong the
+		// moment the first thing on screen has an unfinished arc.
+		refreshValidityBanner();
 		pdgs = [pdg];
 		pdg.repaint_via(redraw);
 		hideScoreReadout();

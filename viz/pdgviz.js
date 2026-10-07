@@ -695,6 +695,8 @@ $(function() {
 		document.getElementById('compare-results').hidden = true;
 		document.getElementById('baseline-compare').open = false;
 		document.body.classList.remove('compare-open');
+		$('#optimize-button').prop('disabled', false).text('Torch Solve');
+		$('#baseline-button').prop('disabled', false).text('Compute factor-product baseline');
 		lastDist = null;
 		conditionOn = null;
 		showDrawer(false);
@@ -1139,14 +1141,16 @@ $(function() {
 			renderComparison();
 			renderSkipped(payload.skipped);
 		} catch(e) {
-			alert('Baseline failed: ' + e.message);
+			if (runId === resultEpoch) alert('Baseline failed: ' + e.message);
 		} finally {
-			$(this).prop('disabled', false).text('Compute factor-product baseline');
+			if (runId === resultEpoch)
+				$(this).prop('disabled', false).text('Compute factor-product baseline');
 		}
 	});
 
 	$('#optimize-button').click(async function() {
 		$(this).prop('disabled', true).text('Solving…');
+		$('#baseline-button').prop('disabled', true);
 		const payload = scoreablePayload();
 		const runId = ++resultEpoch;
 		const settings = { gamma: getGamma(), epsilon: getEpsilon(), iters: currentIters };
@@ -1169,9 +1173,12 @@ $(function() {
 			renderSkipped(payload.skipped);
 			hasSolved = true;
 		} catch(e) {
-			alert('Torch Solve failed: ' + e.message);
+			if (runId === resultEpoch) alert('Torch Solve failed: ' + e.message);
 		} finally {
-			$(this).prop('disabled', false).text('Torch Solve');
+			if (runId === resultEpoch) {
+				$(this).prop('disabled', false).text('Torch Solve');
+				$('#baseline-button').prop('disabled', false);
+			}
 		}
 	});
 	$('#help-toggle').click(function() {

@@ -190,19 +190,7 @@
 
 .tool-btn:active:not(:disabled) { background: #e9ecef; }
 
-/* The active mode is a UI state, so it takes the violet that already means
-   "UI state, not a score" (see --pdg-select). Anything on the grey→red ramp
-   would read as an inconsistency value. */
-.tool-btn.active {
-	background: var(--pdg-select);
-	border-color: var(--pdg-select);
-	color: #fff;
-	font-weight: 600;
-	z-index: 1;
-}
-.tool-btn.active:hover { background: #6d61ab; }
-
-/* Score/Optimize disable themselves and swap in "Scoring…" while in flight. */
+/* Torch Solve disables itself while a solve is in flight. */
 .tool-btn:disabled {
 	color: #adb5bd;
 	background: #f8f9fa;
@@ -916,6 +904,12 @@ body {
 	padding-top: 0.35rem;
 }
 
+.score-method {
+	font-size: 0.66rem;
+	color: #6c757d;
+	margin-bottom: 0.2rem;
+}
+
 
 
 /* ── Example picker ─────────────────────────────────────────────────────── */
@@ -992,6 +986,7 @@ body {
    overlapped — the same rule the toolbar and score panel already follow about
    each other. */
 :root { --drawer-height: 15rem; }
+body.compare-open { --drawer-height: 22rem; }
 
 .joint-drawer {
 	position: fixed;
@@ -1039,6 +1034,43 @@ body.drawer-open .score-panel      { bottom: calc(var(--drawer-height) + 2 * var
 	padding: 0 0.2rem;
 }
 .drawer-close:hover { color: var(--pdg-ink); }
+
+.baseline-compare {
+	border-top: 1px solid #e9ecef;
+	padding: 0.3rem 0.7rem;
+	font-size: 0.69rem;
+	color: #495057;
+}
+.baseline-compare summary { cursor: pointer; font-weight: 600; }
+.baseline-compare-body { padding: 0.4rem 0 0.25rem; }
+.baseline-compare-body p { margin: 0 0 0.35rem; color: #6c757d; }
+.compare-button {
+	border: 1px solid #ced4da;
+	border-radius: 4px;
+	background: #fff;
+	color: #343a40;
+	padding: 0.15rem 0.45rem;
+	font-size: 0.68rem;
+}
+.compare-button:hover:not(:disabled) { border-color: #868e96; }
+.compare-button:disabled { opacity: 0.55; }
+.compare-results { margin-top: 0.4rem; max-width: 34rem; }
+.compare-results[hidden] { display: none; }
+.compare-results > div:not(.compare-actions) {
+	display: grid;
+	grid-template-columns: minmax(8rem, 1fr) 5.5rem 5.5rem;
+	gap: 0.5rem;
+	padding: 0.1rem 0;
+}
+.compare-results > div:first-child { color: #868e96; }
+.compare-results > div span:not(:first-child) { font-family: var(--font-mono); text-align: right; }
+.compare-actions { display: flex; gap: 0.4rem; margin-top: 0.35rem; }
+
+@media (max-width: 800px) {
+	/* The 280px inspector otherwise leaves too little width for a comparison.
+	   At narrow panel sizes, the drawer can temporarily overlay that rail. */
+	.joint-drawer { right: var(--gutter); }
+}
 
 .drawer-cols {
 	display: grid;

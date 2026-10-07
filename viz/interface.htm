@@ -22,7 +22,7 @@
 	</head>
 	<body>
 		<!-- Bottom-LEFT, not bottom-right: the right rail already carries the
-		     inspector column and the score panel. These are chrome (modes, actions,
+		     inspector column and the score panel. These are chrome (actions and
 		     file) and are styled as one panel in the same idiom as the help and
 		     example panels rather than as raw Bootstrap buttons. -->
 		<!-- Sits directly above the toolbar, bottom left. A BUTTON, not a readout:
@@ -39,14 +39,8 @@
 		</button>
 
 		<div class="toolbar" role="toolbar" aria-label="Editor tools">
-			<div id="drag-mode-toolbar" class="tool-group" role="group" aria-label="Drag action">
-				<button data-mode="move" type="button" class="tool-btn active">Manipulate</button>
-				<button data-mode="draw" type="button" class="tool-btn">Draw</button>
-			</div>
-			<span class="tool-sep" aria-hidden="true"></span>
-			<div class="tool-group" role="group" aria-label="Scoring">
-				<button type="button" class="tool-btn" id="score-button">Score</button>
-				<button type="button" class="tool-btn" id="optimize-button">Optimize</button>
+			<div class="tool-group" role="group" aria-label="Solve">
+				<button type="button" class="tool-btn" id="optimize-button">Torch Solve</button>
 			</div>
 			<span class="tool-sep" aria-hidden="true"></span>
 			<div class="tool-group" role="group" aria-label="File">
@@ -76,28 +70,21 @@
 			</button>
 			<div id="help-body" class="help-body" hidden>
 				<div class="help-section">
-					<div class="help-section-title">Modes</div>
-					<div class="help-row"><kbd>m</kbd><span>Manipulate mode</span></div>
-					<div class="help-row"><kbd>d</kbd><span>Draw mode</span></div>
-				</div>
-				<div class="help-section">
 					<div class="help-section-title">Selection</div>
 					<div class="help-row"><kbd>click</kbd><span>Select node / edge</span></div>
 					<div class="help-row"><kbd>shift+click</kbd><span>Multi-select</span></div>
-					<div class="help-row"><kbd>a</kbd><span>Select all</span></div>
-					<div class="help-row"><kbd>b</kbd><span>Box select</span></div>
+					<div class="help-row"><kbd>⌘/Ctrl+A</kbd><span>Select all</span></div>
+					<div class="help-row"><kbd>drag canvas</kbd><span>Box select</span></div>
+					<div class="help-row"><kbd>shift+drag canvas</kbd><span>Add to selection</span></div>
 					<div class="help-row"><kbd>Esc</kbd><span>Cancel / deselect</span></div>
 				</div>
 				<div class="help-section">
 					<div class="help-section-title">Editing</div>
-					<div class="help-row"><kbd>t</kbd><span>Draw arrow from selection</span></div>
-					<div class="help-row"><kbd>g</kbd><span>Grab &amp; move selection</span></div>
-					<div class="help-row"><kbd>Space</kbd><span>Simulate selection (hold)</span></div>
-					<div class="help-row"><kbd>x</kbd><span>Delete selection</span></div>
-					<div class="help-row"><kbd>dbl-click</kbd><span>New node, named (Manipulate mode)</span></div>
-					<div class="help-row"><kbd>click</kbd><span>New node, auto-named X1, X2… (Draw mode)</span></div>
-					<div class="help-row"><kbd>dbl-click node</kbd><span>Expand / collapse it</span></div>
-					<div class="help-row"><kbd>drag</kbd><span>Draw mode: arrow to a node, or to empty canvas for a new one</span></div>
+					<div class="help-row"><kbd>drag</kbd><span>Move a node</span></div>
+					<div class="help-row"><kbd>shift+drag</kbd><span>Draw an arrow from a node</span></div>
+					<div class="help-row"><kbd>t</kbd><span>Draw arrow from selection (supports multiple sources)</span></div>
+					<div class="help-row"><kbd>Backspace</kbd><span>Delete selection</span></div>
+					<div class="help-row"><kbd>dbl-click canvas</kbd><span>Create a node (click its title to rename)</span></div>
 				</div>
 				<div class="help-section">
 					<div class="help-section-title">Inspector</div>
@@ -107,9 +94,9 @@
 					<div class="help-row"><span class="help-indent">Edit values, press Tab/Enter to commit</span></div>
 				</div>
 				<div class="help-section">
-					<div class="help-section-title">Scoring</div>
-					<div class="help-row"><span>Score — factor-product Inc/IDef</span></div>
-					<div class="help-row"><span>Optimize — minimize inconsistency</span></div>
+					<div class="help-section-title">Distribution</div>
+					<div class="help-row"><span>Torch Solve minimizes the PDG objective</span></div>
+					<div class="help-row"><span>Advanced baseline / compare is in the distribution drawer</span></div>
 				</div>
 				<div class="help-section">
 					<div class="help-section-title">File</div>
@@ -118,9 +105,8 @@
 			</div>
 		</div>
 
-		<!-- Inputs (γ, ε) live in the same panel as the outputs (Inc, IDef, marginals)
-		     they govern. The controls are always visible; the readout appears once you
-		     have actually run Score or Optimize. -->
+		<!-- Inputs (γ, ε) live beside the solve readout. The controls are always
+		     visible; the readout appears after a solve. -->
 		<div id="score-panel" class="score-panel">
 			<div class="score-controls">
 				<div class="ctl-row">
@@ -141,6 +127,7 @@
 				</div>
 			</div>
 			<div id="score-readout" class="score-readout" style="display:none">
+				<div id="score-method" class="score-method"></div>
 				<div class="score-row"><span class="score-label">Inc</span><span id="score-inc" class="score-val">—</span></div>
 				<div class="score-row"><span class="score-label">IDef</span><span id="score-idef" class="score-val">—</span></div>
 				<!-- The marginals used to live here. They are a projection OF the joint,
@@ -187,6 +174,22 @@
 					<div class="drawer-hint">bits &middot; what the marginals lose</div>
 				</div>
 			</div>
+			<details id="baseline-compare" class="baseline-compare">
+				<summary>Advanced · baseline / compare</summary>
+				<div class="baseline-compare-body">
+					<p>Factor product is a construction, not another optimizer. It uses β weights; γ does not change it. ε smooths CPDs for both results.</p>
+					<button type="button" id="baseline-button" class="compare-button">Compute factor-product baseline</button>
+					<div id="compare-results" class="compare-results" hidden>
+						<div><span>Method</span><span>Inc · nats</span><span>IDef · bits</span></div>
+						<div><span>Torch solve</span><span id="torch-inc">—</span><span id="torch-idef">—</span></div>
+						<div><span>Factor-product baseline</span><span id="baseline-inc">—</span><span id="baseline-idef">—</span></div>
+						<div class="compare-actions">
+							<button type="button" id="show-torch" class="compare-button">View Torch distribution</button>
+							<button type="button" id="show-baseline" class="compare-button">View baseline distribution</button>
+						</div>
+					</div>
+				</div>
+			</details>
 		</section>
 
 		<canvas id="canvas" width="100%" height="100%" class="fullsize z1"></canvas>

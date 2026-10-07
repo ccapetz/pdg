@@ -1,7 +1,6 @@
 """User-visible contract for the primary solve and advanced baseline workflow."""
 
 from pathlib import Path
-import re
 import unittest
 
 
@@ -30,8 +29,15 @@ class SolveWorkflowTest(unittest.TestCase):
         self.assertIn("fetch('/api/optimize'", JS)
         self.assertIn("fetch('/api/score'", JS)
         self.assertRegex(JS, r"#baseline-button['\"]\)\.click\(async function")
-        self.assertIn("'Torch solve", JS)
+        self.assertIn('Torch solve · γ=', JS)
         self.assertIn("'Factor-product baseline", JS)
+
+    def test_only_torch_reruns_for_gamma_and_both_methods_receive_epsilon(self):
+        self.assertIn("if (hasSolved) $('#optimize-button').click()", JS)
+        baseline = JS.split("$('#baseline-button').click", 1)[1].split("$('#optimize-button').click", 1)[0]
+        self.assertIn('hypergraph: payload.hypergraph, epsilon', baseline)
+        self.assertNotIn('gamma: getGamma()', baseline)
+        self.assertIn('gamma: getGamma(), epsilon: getEpsilon()', JS)
 
 
 if __name__ == "__main__":

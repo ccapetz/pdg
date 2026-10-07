@@ -42,7 +42,7 @@ is *not* this one — it installs matplotlib for `distviz.py`, an unrelated plot
 </details>
 
 > ⚠ **Opening `interface.htm` as a `file://` URL does not work.** The page fetches its
-> startup model over HTTP, and Score/Optimize call back into Python. You need the server.
+> startup model over HTTP, and Torch Solve calls back into Python. You need the server.
 
 The first run downloads PyTorch, so expect it to take a few minutes. After that, startup
 is immediate.
@@ -60,15 +60,13 @@ The tool opens on a worked example. The loop is:
    row-sum validation, and the arc's two confidences — **α** (in the functional
    dependence) and **β** (in the CPD itself). **Click a variable** instead and you get
    its values plus the arcs into and out of it, each one a shortcut to the full arc view.
-3. **Score** computes inconsistency in closed form: `Inc`, `IDef`, and each arc recoloured
-   grey→red by how much *it* contributes. An arc whose CPD rules out something believed
-   has infinite inconsistency, and is drawn in a deeper red **and dashed**, because that
-   is a different kind of thing from a large number.
-4. **Optimize** runs a gradient minimizer to find the beliefs that best reconcile the
-   model (~0.4 s).
-5. **Drag γ** to trade off structural against observational fit; the last action re-runs
-   automatically.
-6. **Read the distribution** in the drawer along the bottom — see below.
+3. **Torch Solve** runs a gradient minimizer to find beliefs that reconcile the model.
+   It reports `Inc` and `IDef` and recolours each arc by its contribution. An arc whose
+   CPD rules out something believed has infinite inconsistency, and is drawn in a
+   deeper red **and dashed**.
+4. **Drag γ** to trade off structural against observational fit; after a solve, releasing
+   the slider re-runs Torch. The ε selector smooths CPDs before either computation.
+5. **Read the distribution** in the drawer along the bottom — see below.
 
 α and β are also drawn, not just editable: **β sets arc thickness, α sets opacity**, so a
 *proper* PDG (β ≫ α) looks like what it is — thick, faint arcs.
@@ -77,9 +75,11 @@ The tool opens on a worked example. The loop is:
 
 You can build a model from nothing:
 
-- **`d`** enters draw mode, where a drag makes an arc and a click makes a node.
-  **`m`** returns to manipulate mode, where double-clicking empty canvas makes a node and
-  asks for its name. `t` pulls an arc from the current selection, `g` grabs, `x` deletes.
+- **Double-click empty canvas** to make an auto-named node, then click its inspector
+  title to rename it. Drag a node to move it;
+  **Shift-drag from a node** to draw an arc. `t` pulls an arc from the current selection
+  (including multiple source nodes). Drag empty canvas to box-select, Cmd/Ctrl+A selects
+  everything, and Backspace/Delete removes the selection.
 - **A new arc arrives with an empty CPD of the right shape**, rows and columns already
   labelled by the variables' values, so it is immediately editable. Unfinished rows are
   flagged red, and an **Autofill** button samples Dirichlet(1) — uniform over the simplex
@@ -95,8 +95,7 @@ You can build a model from nothing:
 
 ### The distribution drawer *(new, work in progress)*
 
-Score or Optimize opens a drawer along the bottom with three views of the joint
-distribution the solver produced:
+Torch Solve opens a drawer along the bottom with three views of its joint distribution:
 
 - **Marginals**, one chip per value. **Click a value to condition on it** and the column
   re-reads as `P( · | PS = ps )`.
@@ -108,6 +107,11 @@ distribution the solver produced:
 The joint itself is never sent to the browser; these are derived from it in `server.py`.
 Conditioning currently re-reads the marginals column only — the other two still describe
 the unconditioned joint.
+
+Open **Advanced · baseline / compare** in the drawer to compute the factor-product
+baseline. It constructs a distribution from β-weighted factors rather than minimizing
+the PDG objective; γ does not affect it, but ε does. The comparison lists Inc in nats
+and IDef in bits for both methods, and lets you inspect either distribution.
 
 ### The examples
 
@@ -161,7 +165,7 @@ bug is documented at the call site rather than patched.
 - **The distribution drawer is new and unfinished.** Conditioning affects the marginals
   column only; the worlds chart and the mutual-information matrix still describe the
   unconditioned joint.
-- An arc whose CPD is unfinished is left out of Score and Optimize — the panel names which
+- An arc whose CPD is unfinished is left out of Torch Solve and the baseline — the panel names which
   ones — rather than being guessed at.
 
 ---

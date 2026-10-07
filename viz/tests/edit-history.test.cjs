@@ -43,3 +43,12 @@ test('loading another model clears prior undo steps', () => {
 	history.reset(graph('X'));
 	assert.equal(history.undo(), null);
 });
+
+test('history is bounded and can snapshot graphs without layout metadata', () => {
+	const history = createEditHistory(2);
+	history.reset({ nodes: ['A'], hedges: {} });
+	history.record({ nodes: ['B'], hedges: {} });
+	history.record({ nodes: ['C'], hedges: {} });
+	assert.deepEqual(history.undo().nodes, ['B']);
+	assert.equal(history.undo(), null);
+});

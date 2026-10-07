@@ -313,7 +313,7 @@ function PDGView(hypergraph, mousept) {
 			beta : Object.keys(beta).length ? beta : undefined,
 			viz : {
 				nodes : Object.fromEntries(nodes.map(
-						n => [n.id, cloneAndPluck(n, ["x", "y", "w", "h", "selected", "expanded"])]
+					n => [n.id, cloneAndPluck(n, ["x", "y", "w", "h", "selected", "expanded", "values"])]
 						// n => [n.id, n]
 					)),
 				linknodes : linknodes.map(
@@ -1390,6 +1390,7 @@ context.globalAlpha = 0.5;
 
 		align_node_dom();
 		update_simulation();   // bipartite links are built from ids, so re-derive them
+		on_model_change();
 		return true;
 	}
 

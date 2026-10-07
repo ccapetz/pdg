@@ -79,7 +79,8 @@ You can build a model from nothing:
   title to rename it. Drag a node to move it;
   **Shift-drag from a node** to draw an arc. `t` pulls an arc from the current selection
   (including multiple source nodes). Drag empty canvas to box-select, Cmd/Ctrl+A selects
-  everything, and Backspace/Delete removes the selection.
+  everything, Backspace/Delete removes the selection, and Cmd/Ctrl+Z undoes the most
+  recent graph edit. Text fields keep their normal typing undo.
 - **A new arc arrives with an empty CPD of the right shape**, rows and columns already
   labelled by the variables' values, so it is immediately editable. Unfinished rows are
   flagged red, and an **Autofill** button samples Dirichlet(1) — uniform over the simplex

@@ -250,6 +250,7 @@ function showEdgeInspector(link, onEdit, view) {
 			else link[key] = parsed;
 			fresh.value = formatWeight(link[key]);
 			hintEl.textContent = weightHint(link);
+			onCpdChanged();
 			if (onEdit) onEdit();
 		});
 	}
@@ -607,6 +608,32 @@ $(function() {
 	// for undeclared names. Nothing outside this closure touches them.
 	let pdg = null;
 	let pdgs = [];
+	const editHistory = createEditHistory();
+	let restoringHistory = false;
+	let editPending = false;
+
+	function scheduleRecordEdit() {
+		if (restoringHistory || !pdg || editPending) return;
+		// One gesture can call several mutators (drawing an arc to a new node,
+		// reshaping CPDs after a domain edit). Undo should reverse that gesture once.
+		editPending = true;
+		queueMicrotask(() => {
+			editPending = false;
+			if (!restoringHistory && pdg) editHistory.record(pdg.state);
+		});
+	}
+
+	function undoEdit() {
+		const previous = editHistory.undo();
+		if (!previous || !pdg) return;
+		restoringHistory = true;
+		try { pdg.load(previous); }
+		finally { restoringHistory = false; }
+		hideInspector(); // the old inspector points at objects replaced by load()
+		hideScoreReadout();
+		refreshValidityBanner();
+		pdg.tick();
+	}
 
 	function resizeCanvas() {
 		// Assigning canvas.width CLEARS the canvas, so every view must redraw.
@@ -633,6 +660,7 @@ $(function() {
 		pdg.notify_change_via(() => {
 			refreshValidityBanner();
 			hideScoreReadout();
+			scheduleRecordEdit();
 		});
 		// PDGView's constructor calls load(), which fires on_model_change() while it
 		// is still the no-op default — the hook is only registered on the line above.
@@ -643,6 +671,7 @@ $(function() {
 		pdgs = [pdg];
 		pdg.repaint_via(redraw);
 		hideScoreReadout();
+		editHistory.reset(pdg.state);
 	}
 
 	// ── γ / ε controls ───────────────────────────────────────────────────────
@@ -747,6 +776,7 @@ $(function() {
 		showExampleMeta(entry);
 		hideScoreReadout();
 		hasSolved = false;
+		editHistory.reset(pdg.state);
 	}
 
 	async function initCatalog() {
@@ -830,7 +860,11 @@ $(function() {
 		document.getElementById('validity-text').textContent =
 			parts.join(', ') + (total === 1 ? ' needs attention' : ' need attention');
 	}
-	onCpdChanged = refreshValidityBanner;
+	onCpdChanged = () => {
+		refreshValidityBanner();
+		hideScoreReadout();
+		scheduleRecordEdit();
+	};
 
 	// Step through the faults rather than dumping them: each click selects the next
 	// offender on the canvas and opens it, so the banner is a way to walk the list.
@@ -1204,6 +1238,7 @@ $(function() {
 			// than leave the previous example's description attached to it.
 			document.getElementById('example-picker').value = '';
 			showExampleMeta(null);
+			editHistory.reset(pdg.state);
 			// console.log("LOADED HYPERGRAPH:", ob);
 		};
 		reader.readAsText(evt.target.files[0]);
@@ -1214,6 +1249,7 @@ $(function() {
 	var popup_process = null;
 	var popped_up_link = null;
 	var action = {};
+	let dragStartPos = null;
  
 	//##  Next, Updating + Preparing shapes for drawing, starting with a 
 	// helpful way of getting average position by node labels.  
@@ -1304,6 +1340,7 @@ $(function() {
 		}
 		else {
 			action = { type: 'drag-move' };
+			dragStartPos = [event.subject.x, event.subject.y];
 			// if there are no other drag handlers currently firing.
 			// apparently useful mostly in multi-touch scenarios.
 			if (!event.active) pdg.sim.alphaTarget(0.5).restart();
@@ -1379,6 +1416,8 @@ $(function() {
 					event.subject.fx = null;
 					event.subject.fy = null;
 				}
+				if (dragStartPos && Math.hypot(event.subject.x - dragStartPos[0],
+						event.subject.y - dragStartPos[1]) > 2) scheduleRecordEdit();
 			}
 		}
 		else if (action.type == 'draw-edge' && temp_link) {
@@ -1391,6 +1430,7 @@ $(function() {
 			temp_link = null;
 		}
 		action = {};
+		dragStartPos = null;
 	}
 	
 	canvas.addEventListener("dblclick", function(e) {
@@ -1448,7 +1488,11 @@ $(function() {
 		const active = document.activeElement;
 		if (active && (active.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(active.tagName))) return;
 
-		if(event.key == 'Escape'){ // cancel //
+		if ((event.metaKey || event.ctrlKey) && !event.shiftKey && event.key.toLowerCase() === 'z') {
+			event.preventDefault();
+			undoEdit();
+		}
+		else if(event.key == 'Escape'){ // cancel //
 			if ( temp_link ) {
 				if(temp_link.based_on ) 
 					temp_link.based_on.display = true;

@@ -39,6 +39,11 @@ class SolveWorkflowTest(unittest.TestCase):
         self.assertNotIn('gamma: getGamma()', baseline)
         self.assertIn('gamma: getGamma(), epsilon: getEpsilon()', JS)
 
+    def test_baseline_cannot_run_during_torch_resolve(self):
+        solve = JS.split("$('#optimize-button').click(async function()", 1)[1]
+        self.assertIn("$('#baseline-button').prop('disabled', true)", solve)
+        self.assertIn("$('#baseline-button').prop('disabled', false)", solve)
+
 
 if __name__ == "__main__":
     unittest.main()
